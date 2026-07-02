@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Mi cuenta{% endblock %}
+{% block content %}
+<h2 class="mb-4">Mi cuenta</h2>
+
+<form method="GET" class="row g-2 mb-4">
+  <div class="col-auto">
+    <input type="text" name="dni" value="{{ dni or '' }}" class="form-control" placeholder="Tu DNI" required>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-primary">Consultar</button>
+  </div>
+</form>
+
+{% if buscado and not cliente %}
+<div class="alert alert-warning">No encontramos ningún cliente con ese DNI.</div>
+{% endif %}
+
+{% if cliente %}
+<div class="card mb-4">
+  <div class="card-body">
+    <h5>{{ cliente.nombre }}</h5>
+    {% if cliente.proximo_vencimiento %}
+      <p>
+        Tu abono vence el <strong>{{ cliente.proximo_vencimiento.strftime('%d/%m/%Y') }}</strong>
+        {% if cliente.abono_vencido %}<span class="badge badge-vencido">Vencido</span>{% endif %}
+      </p>
+    {% else %}
+      <p class="text-muted">Todavía no registramos ningún pago.</p>
+    {% endif %}
+  </div>
+</div>
+
+<h5>Tus turnos reservados</h5>
+{% if inscripciones %}
+<ul class="list-group">
+  {% for insc in inscripciones %}
+  <li class="list-group-item d-flex justify-content-between align-items-center">
+    {{ insc.horario.dia_semana }} {{ insc.horario.hora_inicio }}-{{ insc.horario.hora_fin }}
+    {% if insc.horario.etiqueta %}· {{ insc.horario.etiqueta }}{% endif %}
+    <form method="POST" action="{{ url_for('mi_cuenta_cancelar', inscripcion_id=insc.id) }}" onsubmit="return confirm('¿Cancelar este turno?');">
+      <input type="hidden" name="dni" value="{{ cliente.dni }}">
+      <button type="submit" class="btn btn-sm btn-outline-danger">Cancelar</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">No tenés turnos reservados.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

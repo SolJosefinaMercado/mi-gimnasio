@@ -1,0 +1,9 @@
+body {
+  background-color: #f7f7f9;
+}
+.card {
+  margin-bottom: 1rem;
+}
+.badge-vencido {
+  background-color: #dc3545;
+}

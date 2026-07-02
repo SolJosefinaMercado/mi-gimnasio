@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Horarios y reservas{% endblock %}
+{% block content %}
+<h2 class="mb-4">Reservá tu turno</h2>
+<p class="text-muted">Elegí un horario e ingresá tu DNI (el que le diste al gimnasio) para reservar tu lugar.</p>
+
+{% if not horarios_por_dia %}
+<p class="text-muted">Todavía no hay horarios cargados.</p>
+{% endif %}
+
+{% for dia, horarios in horarios_por_dia.items() %}
+<h5 class="mt-4">{{ dia }}</h5>
+<div class="row">
+  {% for h in horarios %}
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h6>{{ h.hora_inicio }}-{{ h.hora_fin }} {% if h.etiqueta %}· {{ h.etiqueta }}{% endif %}</h6>
+        <p class="text-muted mb-2">Cupo: {{ h.cupo_disponible }}/{{ h.cupo_maximo }}</p>
+        {% if h.cupo_disponible > 0 %}
+        <form method="POST" action="{{ url_for('reservar') }}" class="d-flex gap-2">
+          <input type="hidden" name="horario_id" value="{{ h.id }}">
+          <input type="text" name="dni" class="form-control form-control-sm" placeholder="Tu DNI" required>
+          <button type="submit" class="btn btn-sm btn-primary text-nowrap">Reservar</button>
+        </form>
+        {% else %}
+        <span class="badge bg-secondary">Sin cupo</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}
