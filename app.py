@@ -1,13 +1,15 @@
 import os
-import sqlite3
 from datetime import date, datetime, timedelta
 from functools import wraps
 
 from flask import Flask, g, redirect, render_template, request, session, url_for, flash
+from sqlalchemy import (
+    Boolean, Column, Date, Float, ForeignKey, Integer, MetaData, String,
+    Table, UniqueConstraint, create_engine, text,
+)
+from sqlalchemy.exc import IntegrityError
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE = os.path.join(BASE_DIR, "gimnasio.db")
-SCHEMA = os.path.join(BASE_DIR, "schema.sql")
 
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
@@ -15,12 +17,69 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL:
+    # Render entrega "postgres://", pero SQLAlchemy 2.x requiere "postgresql://"
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+else:
+    engine = create_engine(f"sqlite:///{os.path.join(BASE_DIR, 'gimnasio.db')}")
+
+metadata = MetaData()
+
+clientes_t = Table(
+    "clientes", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("nombre", String, nullable=False),
+    Column("dni", String, nullable=False, unique=True),
+    Column("telefono", String),
+    Column("email", String),
+    Column("activo", Boolean, nullable=False),
+)
+
+pagos_t = Table(
+    "pagos", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("cliente_id", Integer, ForeignKey("clientes.id", ondelete="CASCADE"), nullable=False),
+    Column("fecha_pago", Date, nullable=False),
+    Column("monto", Float, nullable=False),
+    Column("dias_validez", Integer, nullable=False),
+    Column("fecha_vencimiento", Date, nullable=False),
+    Column("nota", String),
+)
+
+horarios_t = Table(
+    "horarios", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("dia_semana", String, nullable=False),
+    Column("hora_inicio", String, nullable=False),
+    Column("hora_fin", String, nullable=False),
+    Column("etiqueta", String),
+    Column("cupo_maximo", Integer, nullable=False),
+)
+
+inscripciones_t = Table(
+    "inscripciones", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("cliente_id", Integer, ForeignKey("clientes.id", ondelete="CASCADE"), nullable=False),
+    Column("horario_id", Integer, ForeignKey("horarios.id", ondelete="CASCADE"), nullable=False),
+    Column("activa", Boolean, nullable=False),
+    UniqueConstraint("cliente_id", "horario_id"),
+)
+
+asistencias_t = Table(
+    "asistencias", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("inscripcion_id", Integer, ForeignKey("inscripciones.id", ondelete="CASCADE"), nullable=False),
+    Column("fecha", Date, nullable=False),
+    UniqueConstraint("inscripcion_id", "fecha"),
+)
+
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = engine.connect()
     return g.db
 
 
@@ -32,15 +91,10 @@ def close_db(exception=None):
 
 
 def init_db():
-    if not os.path.exists(DATABASE):
-        db = sqlite3.connect(DATABASE)
-        with open(SCHEMA, encoding="utf-8") as f:
-            db.executescript(f.read())
-        db.commit()
-        db.close()
+    metadata.create_all(engine)
 
 
-# ---------- Modelos livianos sobre filas de sqlite3 ----------
+# ---------- Modelos livianos sobre filas de la base ----------
 
 class Cliente:
     def __init__(self, row, proximo_vencimiento=None):
@@ -57,33 +111,43 @@ class Cliente:
         return self.proximo_vencimiento is not None and self.proximo_vencimiento < date.today()
 
 
+def _to_date(value):
+    # SQL crudo vía text() no aplica el result_processor de SQLAlchemy: sqlite3
+    # devuelve las columnas Date como str, mientras que psycopg2 ya entrega date.
+    if value is None or isinstance(value, date):
+        return value
+    return date.fromisoformat(value)
+
+
 def _cliente_con_vencimiento(db, row):
     ultimo = db.execute(
-        "SELECT fecha_vencimiento FROM pagos WHERE cliente_id = ? ORDER BY fecha_vencimiento DESC LIMIT 1",
-        (row["id"],),
-    ).fetchone()
-    vencimiento = date.fromisoformat(ultimo["fecha_vencimiento"]) if ultimo else None
+        text("SELECT fecha_vencimiento FROM pagos WHERE cliente_id = :cid ORDER BY fecha_vencimiento DESC LIMIT 1"),
+        {"cid": row["id"]},
+    ).mappings().fetchone()
+    vencimiento = _to_date(ultimo["fecha_vencimiento"]) if ultimo else None
     return Cliente(row, vencimiento)
 
 
 def listar_clientes(db, solo_activos=False):
     query = "SELECT * FROM clientes"
+    params = {}
     if solo_activos:
-        query += " WHERE activo = 1"
+        query += " WHERE activo = :activo"
+        params["activo"] = True
     query += " ORDER BY nombre"
-    rows = db.execute(query).fetchall()
+    rows = db.execute(text(query), params).mappings().fetchall()
     return [_cliente_con_vencimiento(db, r) for r in rows]
 
 
 def obtener_cliente_por_dni(db, dni):
-    row = db.execute("SELECT * FROM clientes WHERE dni = ?", (dni,)).fetchone()
+    row = db.execute(text("SELECT * FROM clientes WHERE dni = :dni"), {"dni": dni}).mappings().fetchone()
     if not row:
         return None
     return _cliente_con_vencimiento(db, row)
 
 
 def obtener_cliente_por_id(db, cliente_id):
-    row = db.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
+    row = db.execute(text("SELECT * FROM clientes WHERE id = :id"), {"id": cliente_id}).mappings().fetchone()
     if not row:
         return None
     return _cliente_con_vencimiento(db, row)
@@ -103,21 +167,22 @@ class Horario:
 
 def _cupo_disponible(db, horario_id, cupo_maximo):
     usados = db.execute(
-        "SELECT COUNT(*) AS c FROM inscripciones WHERE horario_id = ? AND activa = 1", (horario_id,)
-    ).fetchone()["c"]
+        text("SELECT COUNT(*) AS c FROM inscripciones WHERE horario_id = :hid AND activa = :activa"),
+        {"hid": horario_id, "activa": True},
+    ).mappings().fetchone()["c"]
     return cupo_maximo - usados
 
 
 def listar_horarios(db, dia_semana=None, con_inscripciones=False):
     query = "SELECT * FROM horarios"
-    params = ()
+    params = {}
     if dia_semana:
-        query += " WHERE dia_semana = ?"
-        params = (dia_semana,)
+        query += " WHERE dia_semana = :dia"
+        params["dia"] = dia_semana
     query += " ORDER BY CASE dia_semana " + " ".join(
         f"WHEN '{d}' THEN {i}" for i, d in enumerate(DIAS)
     ) + " END, hora_inicio"
-    rows = db.execute(query, params).fetchall()
+    rows = db.execute(text(query), params).mappings().fetchall()
     horarios = []
     for row in rows:
         cupo = _cupo_disponible(db, row["id"], row["cupo_maximo"])
@@ -140,11 +205,13 @@ class Inscripcion:
 
 def listar_inscripciones_de_horario(db, horario_id):
     rows = db.execute(
-        "SELECT i.*, c.id AS c_id, c.nombre AS c_nombre, c.dni AS c_dni, c.telefono AS c_telefono, "
-        "c.email AS c_email, c.activo AS c_activo "
-        "FROM inscripciones i JOIN clientes c ON c.id = i.cliente_id WHERE i.horario_id = ?",
-        (horario_id,),
-    ).fetchall()
+        text(
+            "SELECT i.*, c.id AS c_id, c.nombre AS c_nombre, c.dni AS c_dni, c.telefono AS c_telefono, "
+            "c.email AS c_email, c.activo AS c_activo "
+            "FROM inscripciones i JOIN clientes c ON c.id = i.cliente_id WHERE i.horario_id = :hid"
+        ),
+        {"hid": horario_id},
+    ).mappings().fetchall()
     result = []
     for row in rows:
         cliente = Cliente({
@@ -157,12 +224,14 @@ def listar_inscripciones_de_horario(db, horario_id):
 
 def listar_inscripciones_de_cliente(db, cliente_id):
     rows = db.execute(
-        "SELECT i.*, h.* , i.id AS i_id FROM inscripciones i JOIN horarios h ON h.id = i.horario_id "
-        "WHERE i.cliente_id = ? AND i.activa = 1 "
-        "ORDER BY CASE h.dia_semana " + " ".join(f"WHEN '{d}' THEN {n}" for n, d in enumerate(DIAS)) +
-        " END, h.hora_inicio",
-        (cliente_id,),
-    ).fetchall()
+        text(
+            "SELECT i.*, h.*, i.id AS i_id FROM inscripciones i JOIN horarios h ON h.id = i.horario_id "
+            "WHERE i.cliente_id = :cid AND i.activa = :activa "
+            "ORDER BY CASE h.dia_semana " + " ".join(f"WHEN '{d}' THEN {n}" for n, d in enumerate(DIAS)) +
+            " END, h.hora_inicio"
+        ),
+        {"cid": cliente_id, "activa": True},
+    ).mappings().fetchall()
     result = []
     for row in rows:
         horario_row = {
@@ -179,20 +248,22 @@ class Pago:
     def __init__(self, row, cliente):
         self.id = row["id"]
         self.cliente = cliente
-        self.fecha_pago = date.fromisoformat(row["fecha_pago"])
+        self.fecha_pago = _to_date(row["fecha_pago"])
         self.monto = row["monto"]
         self.dias_validez = row["dias_validez"]
-        self.fecha_vencimiento = date.fromisoformat(row["fecha_vencimiento"])
+        self.fecha_vencimiento = _to_date(row["fecha_vencimiento"])
         self.nota = row["nota"]
 
 
 def listar_pagos(db, limit=20):
     rows = db.execute(
-        "SELECT p.*, c.id AS c_id, c.nombre AS c_nombre, c.dni AS c_dni, c.telefono AS c_telefono, "
-        "c.email AS c_email, c.activo AS c_activo "
-        "FROM pagos p JOIN clientes c ON c.id = p.cliente_id ORDER BY p.fecha_pago DESC, p.id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+        text(
+            "SELECT p.*, c.id AS c_id, c.nombre AS c_nombre, c.dni AS c_dni, c.telefono AS c_telefono, "
+            "c.email AS c_email, c.activo AS c_activo "
+            "FROM pagos p JOIN clientes c ON c.id = p.cliente_id ORDER BY p.fecha_pago DESC, p.id DESC LIMIT :limit"
+        ),
+        {"limit": limit},
+    ).mappings().fetchall()
     result = []
     for row in rows:
         cliente = Cliente({
@@ -237,14 +308,14 @@ def reservar():
         flash("No encontramos un cliente activo con ese DNI. Consultá con el gimnasio.", "error")
         return redirect(url_for("index"))
 
-    horario_row = db.execute("SELECT * FROM horarios WHERE id = ?", (horario_id,)).fetchone()
+    horario_row = db.execute(text("SELECT * FROM horarios WHERE id = :hid"), {"hid": horario_id}).mappings().fetchone()
     if not horario_row:
         flash("Ese horario ya no existe.", "error")
         return redirect(url_for("index"))
 
     ya_inscripto = db.execute(
-        "SELECT 1 FROM inscripciones WHERE cliente_id = ? AND horario_id = ? AND activa = 1",
-        (cliente.id, horario_id),
+        text("SELECT 1 FROM inscripciones WHERE cliente_id = :cid AND horario_id = :hid AND activa = :activa"),
+        {"cid": cliente.id, "hid": horario_id, "activa": True},
     ).fetchone()
     if ya_inscripto:
         flash("Ya tenés una reserva en ese horario.", "error")
@@ -256,14 +327,15 @@ def reservar():
         return redirect(url_for("index"))
 
     existente = db.execute(
-        "SELECT id FROM inscripciones WHERE cliente_id = ? AND horario_id = ?", (cliente.id, horario_id)
-    ).fetchone()
+        text("SELECT id FROM inscripciones WHERE cliente_id = :cid AND horario_id = :hid"),
+        {"cid": cliente.id, "hid": horario_id},
+    ).mappings().fetchone()
     if existente:
-        db.execute("UPDATE inscripciones SET activa = 1 WHERE id = ?", (existente["id"],))
+        db.execute(text("UPDATE inscripciones SET activa = :activa WHERE id = :id"), {"activa": True, "id": existente["id"]})
     else:
         db.execute(
-            "INSERT INTO inscripciones (cliente_id, horario_id, activa) VALUES (?, ?, 1)",
-            (cliente.id, horario_id),
+            text("INSERT INTO inscripciones (cliente_id, horario_id, activa) VALUES (:cid, :hid, :activa)"),
+            {"cid": cliente.id, "hid": horario_id, "activa": True},
         )
     db.commit()
     flash("¡Turno reservado!", "success")
@@ -291,11 +363,11 @@ def mi_cuenta_cancelar(inscripcion_id):
     db = get_db()
     dni = request.form.get("dni", "").strip()
     row = db.execute(
-        "SELECT i.id, c.dni FROM inscripciones i JOIN clientes c ON c.id = i.cliente_id WHERE i.id = ?",
-        (inscripcion_id,),
-    ).fetchone()
+        text("SELECT i.id, c.dni FROM inscripciones i JOIN clientes c ON c.id = i.cliente_id WHERE i.id = :id"),
+        {"id": inscripcion_id},
+    ).mappings().fetchone()
     if row and row["dni"] == dni:
-        db.execute("UPDATE inscripciones SET activa = 0 WHERE id = ?", (inscripcion_id,))
+        db.execute(text("UPDATE inscripciones SET activa = :activa WHERE id = :id"), {"activa": False, "id": inscripcion_id})
         db.commit()
         flash("Turno cancelado.", "success")
     else:
@@ -356,11 +428,15 @@ def admin_cliente_nuevo():
         db = get_db()
         try:
             db.execute(
-                "INSERT INTO clientes (nombre, dni, telefono, email, activo) VALUES (?, ?, ?, ?, 1)",
-                (request.form["nombre"], request.form["dni"], request.form.get("telefono"), request.form.get("email")),
+                text("INSERT INTO clientes (nombre, dni, telefono, email, activo) VALUES (:nombre, :dni, :telefono, :email, :activo)"),
+                {
+                    "nombre": request.form["nombre"], "dni": request.form["dni"],
+                    "telefono": request.form.get("telefono"), "email": request.form.get("email"), "activo": True,
+                },
             )
             db.commit()
-        except sqlite3.IntegrityError:
+        except IntegrityError:
+            db.rollback()
             flash("Ya existe un cliente con ese DNI.", "error")
             return render_template("admin/cliente_form.html", cliente=None)
         return redirect(url_for("admin_clientes"))
@@ -373,11 +449,14 @@ def admin_cliente_editar(cliente_id):
     db = get_db()
     if request.method == "POST":
         db.execute(
-            "UPDATE clientes SET nombre = ?, dni = ?, telefono = ?, email = ?, activo = ? WHERE id = ?",
-            (
-                request.form["nombre"], request.form["dni"], request.form.get("telefono"),
-                request.form.get("email"), 1 if request.form.get("activo") else 0, cliente_id,
+            text(
+                "UPDATE clientes SET nombre = :nombre, dni = :dni, telefono = :telefono, "
+                "email = :email, activo = :activo WHERE id = :id"
             ),
+            {
+                "nombre": request.form["nombre"], "dni": request.form["dni"], "telefono": request.form.get("telefono"),
+                "email": request.form.get("email"), "activo": bool(request.form.get("activo")), "id": cliente_id,
+            },
         )
         db.commit()
         return redirect(url_for("admin_clientes"))
@@ -389,7 +468,7 @@ def admin_cliente_editar(cliente_id):
 @admin_required
 def admin_cliente_eliminar(cliente_id):
     db = get_db()
-    db.execute("DELETE FROM clientes WHERE id = ?", (cliente_id,))
+    db.execute(text("DELETE FROM clientes WHERE id = :id"), {"id": cliente_id})
     db.commit()
     return redirect(url_for("admin_clientes"))
 
@@ -405,12 +484,14 @@ def admin_pagos():
         dias_validez = int(request.form["dias_validez"])
         fecha_vencimiento = fecha_pago + timedelta(days=dias_validez)
         db.execute(
-            "INSERT INTO pagos (cliente_id, fecha_pago, monto, dias_validez, fecha_vencimiento, nota) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                request.form["cliente_id"], fecha_pago.isoformat(), float(request.form["monto"]),
-                dias_validez, fecha_vencimiento.isoformat(), request.form.get("nota"),
+            text(
+                "INSERT INTO pagos (cliente_id, fecha_pago, monto, dias_validez, fecha_vencimiento, nota) "
+                "VALUES (:cid, :fecha_pago, :monto, :dias_validez, :fecha_vencimiento, :nota)"
             ),
+            {
+                "cid": request.form["cliente_id"], "fecha_pago": fecha_pago, "monto": float(request.form["monto"]),
+                "dias_validez": dias_validez, "fecha_vencimiento": fecha_vencimiento, "nota": request.form.get("nota"),
+            },
         )
         db.commit()
         return redirect(url_for("admin_pagos"))
@@ -430,11 +511,14 @@ def admin_horarios():
     db = get_db()
     if request.method == "POST":
         db.execute(
-            "INSERT INTO horarios (dia_semana, hora_inicio, hora_fin, etiqueta, cupo_maximo) VALUES (?, ?, ?, ?, ?)",
-            (
-                request.form["dia_semana"], request.form["hora_inicio"], request.form["hora_fin"],
-                request.form.get("etiqueta"), int(request.form["cupo_maximo"]),
+            text(
+                "INSERT INTO horarios (dia_semana, hora_inicio, hora_fin, etiqueta, cupo_maximo) "
+                "VALUES (:dia, :inicio, :fin, :etiqueta, :cupo)"
             ),
+            {
+                "dia": request.form["dia_semana"], "inicio": request.form["hora_inicio"], "fin": request.form["hora_fin"],
+                "etiqueta": request.form.get("etiqueta"), "cupo": int(request.form["cupo_maximo"]),
+            },
         )
         db.commit()
         return redirect(url_for("admin_horarios"))
@@ -445,7 +529,7 @@ def admin_horarios():
 @admin_required
 def admin_horario_eliminar(horario_id):
     db = get_db()
-    db.execute("DELETE FROM horarios WHERE id = ?", (horario_id,))
+    db.execute(text("DELETE FROM horarios WHERE id = :id"), {"id": horario_id})
     db.commit()
     return redirect(url_for("admin_horarios"))
 
@@ -464,15 +548,16 @@ def admin_asistencia():
         inscripcion_id = request.form["inscripcion_id"]
         try:
             db.execute(
-                "INSERT INTO asistencias (inscripcion_id, fecha) VALUES (?, ?)", (inscripcion_id, fecha_sel)
+                text("INSERT INTO asistencias (inscripcion_id, fecha) VALUES (:iid, :fecha)"),
+                {"iid": inscripcion_id, "fecha": fecha_dt},
             )
             db.commit()
-        except sqlite3.IntegrityError:
-            pass
+        except IntegrityError:
+            db.rollback()
         return redirect(url_for("admin_asistencia", fecha=fecha_sel))
 
     horarios = listar_horarios(db, dia_semana=dia_nombre, con_inscripciones=True)
-    rows = db.execute("SELECT inscripcion_id FROM asistencias WHERE fecha = ?", (fecha_sel,)).fetchall()
+    rows = db.execute(text("SELECT inscripcion_id FROM asistencias WHERE fecha = :fecha"), {"fecha": fecha_dt}).mappings().fetchall()
     asistencias_hoy = {r["inscripcion_id"] for r in rows}
     return render_template(
         "admin/asistencia.html",
