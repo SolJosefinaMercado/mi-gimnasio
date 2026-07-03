@@ -7,3 +7,13 @@ body {
 .badge-vencido {
   background-color: #dc3545;
 }
+.btn-brand-turnos {
+  background-color: #FFF587;
+  color: #212529;
+  border-color: #FFF587;
+}
+.btn-brand-turnos:hover {
+  background-color: #f7ea5c;
+  color: #212529;
+  border-color: #f7ea5c;
+}

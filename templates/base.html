@@ -10,7 +10,7 @@
 <body>
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
     <div class="container">
-      <a class="navbar-brand" href="{{ url_for('index') }}">Mi Gimnasio</a>
+      <a class="btn btn-sm fw-bold btn-brand-turnos" href="{{ url_for('index') }}">RESERVA DE TURNOS</a>
       <div class="d-flex gap-2">
         <a href="{{ url_for('mi_cuenta') }}" class="btn btn-outline-light btn-sm">Mi cuenta / vencimiento</a>
         {% if session.get('is_admin') %}
