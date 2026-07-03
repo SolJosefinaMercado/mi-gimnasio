@@ -21,7 +21,7 @@
 {% if cliente %}
 <div class="card mb-4">
   <div class="card-body">
-    <h5>{{ cliente.nombre }}</h5>
+    <h5>{{ cliente.nombre }} <a class="small" href="{{ url_for('salir_cliente') }}">¿No sos vos?</a></h5>
     {% if cliente.proximo_vencimiento %}
       <p>
         Tu abono vence el <strong>{{ cliente.proximo_vencimiento.strftime('%d/%m/%Y') }}</strong>

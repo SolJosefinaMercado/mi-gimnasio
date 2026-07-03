@@ -16,6 +16,7 @@ DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Doming
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+app.permanent_session_lifetime = timedelta(days=180)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -338,12 +339,30 @@ def admin_required(view):
     return wrapped
 
 
+# ---------- Identificación de clientes (sin contraseña, solo DNI) ----------
+
+def identificar_cliente(cliente):
+    session["cliente_dni"] = cliente.dni
+    session.permanent = True
+
+
+def cliente_de_sesion(db):
+    dni = session.get("cliente_dni")
+    if not dni:
+        return None
+    cliente = obtener_cliente_por_dni(db, dni)
+    if not cliente or not cliente.activo:
+        session.pop("cliente_dni", None)
+        return None
+    return cliente
+
+
 # ---------- Rutas públicas ----------
 
 @app.route("/")
 def index():
     db = get_db()
-    horarios = listar_horarios(db)
+    horarios = listar_horarios(db, con_inscripciones=True)
     horarios_por_dia = {}
     for h in horarios:
         horarios_por_dia.setdefault(h.dia_semana, []).append(h)
@@ -352,21 +371,32 @@ def index():
         config.whatsapp_numero, "Hola! Te escribo para enviarte el comprobante de mi pago del abono."
     )
     return render_template(
-        "index.html", horarios_por_dia=horarios_por_dia,
+        "index.html", horarios_por_dia=horarios_por_dia, cliente_actual=cliente_de_sesion(db),
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
     )
+
+
+@app.route("/salir-cliente")
+def salir_cliente():
+    session.pop("cliente_dni", None)
+    return redirect(url_for("index"))
 
 
 @app.route("/reservar", methods=["POST"])
 def reservar():
     db = get_db()
-    dni = request.form["dni"].strip()
+    dni = request.form.get("dni", "").strip() or session.get("cliente_dni", "")
     horario_id = request.form["horario_id"]
+
+    if not dni:
+        flash("Necesitás ingresar tu DNI para reservar.", "error")
+        return redirect(url_for("index"))
 
     cliente = obtener_cliente_por_dni(db, dni)
     if not cliente or not cliente.activo:
         flash("No encontramos un cliente activo con ese DNI. Consultá con el gimnasio.", "error")
         return redirect(url_for("index"))
+    identificar_cliente(cliente)
 
     horario_row = db.execute(text("SELECT * FROM horarios WHERE id = :hid"), {"hid": horario_id}).mappings().fetchone()
     if not horario_row:
@@ -405,13 +435,14 @@ def reservar():
 @app.route("/mi-cuenta")
 def mi_cuenta():
     db = get_db()
-    dni = request.args.get("dni", "").strip()
+    dni = request.args.get("dni", "").strip() or session.get("cliente_dni", "")
     cliente = None
     inscripciones = []
     buscado = bool(dni)
     if dni:
         cliente = obtener_cliente_por_dni(db, dni)
         if cliente:
+            identificar_cliente(cliente)
             inscripciones = listar_inscripciones_de_cliente(db, cliente.id)
     config = obtener_config(db)
     mensaje = (
