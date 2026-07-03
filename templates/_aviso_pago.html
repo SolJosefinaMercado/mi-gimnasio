@@ -1,0 +1,17 @@
+{% if config and config.alias_mp and planes %}
+<div class="card mb-4 border-primary">
+  <div class="card-body">
+    <h5 class="card-title">Formas de pago</h5>
+    <ul class="list-unstyled mb-2">
+      {% for p in planes %}
+      <li>{{ p.nombre }}: <strong>${{ '%.2f'|format(p.precio) }}</strong></li>
+      {% endfor %}
+    </ul>
+    <p class="mb-1">Alias de Mercado Pago: <strong>{{ config.alias_mp }}</strong></p>
+    <p class="text-muted mb-2">Una vez que pagues, envianos el comprobante para que lo registremos.</p>
+    {% if whatsapp_link %}
+    <a href="{{ whatsapp_link }}" target="_blank" rel="noopener" class="btn btn-success btn-sm">Avisar pago por WhatsApp</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

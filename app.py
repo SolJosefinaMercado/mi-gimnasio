@@ -1,6 +1,7 @@
 import os
 from datetime import date, datetime, timedelta
 from functools import wraps
+from urllib.parse import quote
 
 from flask import Flask, g, redirect, render_template, request, session, url_for, flash
 from sqlalchemy import (
@@ -78,6 +79,20 @@ asistencias_t = Table(
     UniqueConstraint("inscripcion_id", "fecha"),
 )
 
+planes_t = Table(
+    "planes", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("nombre", String, nullable=False),
+    Column("precio", Float, nullable=False),
+)
+
+configuracion_t = Table(
+    "configuracion", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("alias_mp", String, nullable=False),
+    Column("whatsapp_numero", String, nullable=False),
+)
+
 
 def get_db():
     if "db" not in g:
@@ -94,6 +109,10 @@ def close_db(exception=None):
 
 def init_db():
     metadata.create_all(engine)
+    with engine.begin() as conn:
+        existe = conn.execute(text("SELECT 1 FROM configuracion WHERE id = 1")).fetchone()
+        if not existe:
+            conn.execute(text("INSERT INTO configuracion (id, alias_mp, whatsapp_numero) VALUES (1, '', '')"))
 
 
 # ---------- Modelos livianos sobre filas de la base ----------
@@ -276,6 +295,38 @@ def listar_pagos(db, limit=20):
     return result
 
 
+class Plan:
+    def __init__(self, row):
+        self.id = row["id"]
+        self.nombre = row["nombre"]
+        self.precio = row["precio"]
+
+
+def listar_planes(db):
+    rows = db.execute(text("SELECT * FROM planes ORDER BY precio")).mappings().fetchall()
+    return [Plan(r) for r in rows]
+
+
+class Config:
+    def __init__(self, row):
+        self.alias_mp = row["alias_mp"]
+        self.whatsapp_numero = row["whatsapp_numero"]
+
+
+def obtener_config(db):
+    row = db.execute(text("SELECT * FROM configuracion WHERE id = 1")).mappings().fetchone()
+    return Config(row)
+
+
+def construir_whatsapp_link(numero, mensaje):
+    if not numero:
+        return None
+    numero_limpio = "".join(ch for ch in numero if ch.isdigit())
+    if not numero_limpio:
+        return None
+    return f"https://wa.me/{numero_limpio}?text={quote(mensaje)}"
+
+
 # ---------- Auth admin ----------
 
 def admin_required(view):
@@ -296,7 +347,14 @@ def index():
     horarios_por_dia = {}
     for h in horarios:
         horarios_por_dia.setdefault(h.dia_semana, []).append(h)
-    return render_template("index.html", horarios_por_dia=horarios_por_dia)
+    config = obtener_config(db)
+    whatsapp_link = construir_whatsapp_link(
+        config.whatsapp_numero, "Hola! Te escribo para enviarte el comprobante de mi pago del abono."
+    )
+    return render_template(
+        "index.html", horarios_por_dia=horarios_por_dia,
+        planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
+    )
 
 
 @app.route("/reservar", methods=["POST"])
@@ -355,8 +413,15 @@ def mi_cuenta():
         cliente = obtener_cliente_por_dni(db, dni)
         if cliente:
             inscripciones = listar_inscripciones_de_cliente(db, cliente.id)
+    config = obtener_config(db)
+    mensaje = (
+        f"Hola! Soy {cliente.nombre} (DNI {cliente.dni}), te envío el comprobante de mi pago."
+        if cliente else "Hola! Te escribo para enviarte el comprobante de mi pago del abono."
+    )
+    whatsapp_link = construir_whatsapp_link(config.whatsapp_numero, mensaje)
     return render_template(
-        "mi_cuenta.html", dni=dni, cliente=cliente, inscripciones=inscripciones, buscado=buscado
+        "mi_cuenta.html", dni=dni, cliente=cliente, inscripciones=inscripciones, buscado=buscado,
+        planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
     )
 
 
@@ -568,6 +633,43 @@ def admin_asistencia():
         dia_nombre=dia_nombre,
         asistencias_hoy=asistencias_hoy,
     )
+
+
+# ---------- Admin: configuración (pago y contacto) ----------
+
+@app.route("/admin/config", methods=["GET", "POST"])
+@admin_required
+def admin_config():
+    db = get_db()
+    if request.method == "POST":
+        db.execute(
+            text("UPDATE configuracion SET alias_mp = :alias, whatsapp_numero = :whatsapp WHERE id = 1"),
+            {"alias": request.form.get("alias_mp", "").strip(), "whatsapp": request.form.get("whatsapp_numero", "").strip()},
+        )
+        db.commit()
+        return redirect(url_for("admin_config"))
+    return render_template("admin/config.html", config=obtener_config(db), planes=listar_planes(db))
+
+
+@app.route("/admin/config/planes", methods=["POST"])
+@admin_required
+def admin_plan_nuevo():
+    db = get_db()
+    db.execute(
+        text("INSERT INTO planes (nombre, precio) VALUES (:nombre, :precio)"),
+        {"nombre": request.form["nombre"], "precio": float(request.form["precio"])},
+    )
+    db.commit()
+    return redirect(url_for("admin_config"))
+
+
+@app.route("/admin/config/planes/<int:plan_id>/eliminar", methods=["POST"])
+@admin_required
+def admin_plan_eliminar(plan_id):
+    db = get_db()
+    db.execute(text("DELETE FROM planes WHERE id = :id"), {"id": plan_id})
+    db.commit()
+    return redirect(url_for("admin_config"))
 
 
 init_db()
