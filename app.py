@@ -6,7 +6,7 @@ from urllib.parse import quote
 from flask import Flask, g, redirect, render_template, request, session, url_for, flash
 from sqlalchemy import (
     Boolean, Column, Date, Float, ForeignKey, Integer, MetaData, String,
-    Table, UniqueConstraint, create_engine, text,
+    Table, Text, UniqueConstraint, create_engine, text,
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -92,6 +92,13 @@ configuracion_t = Table(
     Column("id", Integer, primary_key=True),
     Column("alias_mp", String, nullable=False),
     Column("whatsapp_numero", String, nullable=False),
+)
+
+entrenamientos_t = Table(
+    "entrenamientos", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("fecha", Date, nullable=False, unique=True),
+    Column("contenido", Text, nullable=False),
 )
 
 
@@ -328,6 +335,33 @@ def construir_whatsapp_link(numero, mensaje):
     return f"https://wa.me/{numero_limpio}?text={quote(mensaje)}"
 
 
+class Entrenamiento:
+    def __init__(self, row):
+        self.id = row["id"]
+        self.fecha = _to_date(row["fecha"])
+        self.contenido = row["contenido"]
+
+
+def obtener_entrenamiento(db, fecha):
+    row = db.execute(text("SELECT * FROM entrenamientos WHERE fecha = :fecha"), {"fecha": fecha}).mappings().fetchone()
+    return Entrenamiento(row) if row else None
+
+
+def guardar_entrenamiento(db, fecha, contenido):
+    existente = obtener_entrenamiento(db, fecha)
+    if existente:
+        db.execute(
+            text("UPDATE entrenamientos SET contenido = :contenido WHERE fecha = :fecha"),
+            {"contenido": contenido, "fecha": fecha},
+        )
+    else:
+        db.execute(
+            text("INSERT INTO entrenamientos (fecha, contenido) VALUES (:fecha, :contenido)"),
+            {"fecha": fecha, "contenido": contenido},
+        )
+    db.commit()
+
+
 # ---------- Auth admin ----------
 
 def admin_required(view):
@@ -373,6 +407,7 @@ def index():
     return render_template(
         "index.html", horarios_por_dia=horarios_por_dia, cliente_actual=cliente_de_sesion(db),
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
+        entrenamiento_hoy=obtener_entrenamiento(db, date.today()),
     )
 
 
@@ -663,6 +698,27 @@ def admin_asistencia():
         fecha_sel=fecha_sel,
         dia_nombre=dia_nombre,
         asistencias_hoy=asistencias_hoy,
+    )
+
+
+# ---------- Admin: entrenamiento del día ----------
+
+@app.route("/admin/entrenamiento", methods=["GET", "POST"])
+@admin_required
+def admin_entrenamiento():
+    db = get_db()
+    fecha_sel = request.values.get("fecha") or date.today().isoformat()
+    fecha_dt = date.fromisoformat(fecha_sel)
+
+    if request.method == "POST":
+        guardar_entrenamiento(db, fecha_dt, request.form.get("contenido", "").strip())
+        return redirect(url_for("admin_entrenamiento", fecha=fecha_sel))
+
+    return render_template(
+        "admin/entrenamiento.html",
+        fecha_sel=fecha_sel,
+        entrenamiento=obtener_entrenamiento(db, fecha_dt),
+        es_hoy=fecha_sel == date.today().isoformat(),
     )
 
 

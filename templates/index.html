@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Horarios y reservas{% endblock %}
 {% block content %}
+{% if entrenamiento_hoy %}
+<div class="card mb-4 border-success">
+  <div class="card-body">
+    <h5 class="card-title">Entrenamiento de hoy</h5>
+    <p class="card-text" style="white-space: pre-wrap;">{{ entrenamiento_hoy.contenido }}</p>
+  </div>
+</div>
+{% endif %}
+
 {% include "_aviso_pago.html" %}
 
 <h2 class="mb-4">Reservá tu turno</h2>
