@@ -6,7 +6,7 @@ from urllib.parse import quote
 from flask import Flask, g, redirect, render_template, request, session, url_for, flash
 from sqlalchemy import (
     Boolean, Column, Date, Float, ForeignKey, Integer, MetaData, String,
-    Table, Text, UniqueConstraint, create_engine, text,
+    Table, Text, UniqueConstraint, create_engine, inspect, text,
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -61,6 +61,7 @@ horarios_t = Table(
     Column("hora_fin", String, nullable=False),
     Column("etiqueta", String),
     Column("cupo_maximo", Integer, nullable=False),
+    Column("activo", Boolean, nullable=False),
 )
 
 inscripciones_t = Table(
@@ -69,6 +70,7 @@ inscripciones_t = Table(
     Column("cliente_id", Integer, ForeignKey("clientes.id", ondelete="CASCADE"), nullable=False),
     Column("horario_id", Integer, ForeignKey("horarios.id", ondelete="CASCADE"), nullable=False),
     Column("activa", Boolean, nullable=False),
+    Column("semana", Date),
     UniqueConstraint("cliente_id", "horario_id"),
 )
 
@@ -117,10 +119,22 @@ def close_db(exception=None):
 
 def init_db():
     metadata.create_all(engine)
+    inspector = inspect(engine)
+    horarios_cols = {c["name"] for c in inspector.get_columns("horarios")}
+    inscripciones_cols = {c["name"] for c in inspector.get_columns("inscripciones")}
     with engine.begin() as conn:
+        # Migraciones livianas para bases ya desplegadas antes de estas columnas existir.
+        if "activo" not in horarios_cols:
+            conn.execute(text("ALTER TABLE horarios ADD COLUMN activo BOOLEAN NOT NULL DEFAULT TRUE"))
+        if "semana" not in inscripciones_cols:
+            conn.execute(text("ALTER TABLE inscripciones ADD COLUMN semana DATE"))
         existe = conn.execute(text("SELECT 1 FROM configuracion WHERE id = 1")).fetchone()
         if not existe:
             conn.execute(text("INSERT INTO configuracion (id, alias_mp, whatsapp_numero) VALUES (1, '', '')"))
+
+
+def inicio_semana(fecha):
+    return fecha - timedelta(days=fecha.weekday())
 
 
 # ---------- Modelos livianos sobre filas de la base ----------
@@ -192,32 +206,40 @@ class Horario:
         self.cupo_maximo = row["cupo_maximo"]
         self.cupo_disponible = cupo_disponible
         self.inscripciones = inscripciones or []
+        self.activo = bool(row["activo"])
 
 
-def _cupo_disponible(db, horario_id, cupo_maximo):
+def _cupo_disponible(db, horario_id, cupo_maximo, semana):
     usados = db.execute(
-        text("SELECT COUNT(*) AS c FROM inscripciones WHERE horario_id = :hid AND activa = :activa"),
-        {"hid": horario_id, "activa": True},
+        text("SELECT COUNT(*) AS c FROM inscripciones WHERE horario_id = :hid AND activa = :activa AND semana = :semana"),
+        {"hid": horario_id, "activa": True, "semana": semana},
     ).mappings().fetchone()["c"]
     return cupo_maximo - usados
 
 
-def listar_horarios(db, dia_semana=None, con_inscripciones=False):
+def listar_horarios(db, dia_semana=None, con_inscripciones=False, solo_activos=True, semana=None):
+    semana = semana or inicio_semana(date.today())
     query = "SELECT * FROM horarios"
+    conditions = []
     params = {}
     if dia_semana:
-        query += " WHERE dia_semana = :dia"
+        conditions.append("dia_semana = :dia")
         params["dia"] = dia_semana
+    if solo_activos:
+        conditions.append("activo = :activo")
+        params["activo"] = True
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY CASE dia_semana " + " ".join(
         f"WHEN '{d}' THEN {i}" for i, d in enumerate(DIAS)
     ) + " END, hora_inicio"
     rows = db.execute(text(query), params).mappings().fetchall()
     horarios = []
     for row in rows:
-        cupo = _cupo_disponible(db, row["id"], row["cupo_maximo"])
+        cupo = _cupo_disponible(db, row["id"], row["cupo_maximo"], semana)
         inscripciones = []
         if con_inscripciones:
-            inscripciones = listar_inscripciones_de_horario(db, row["id"])
+            inscripciones = listar_inscripciones_de_horario(db, row["id"], semana)
         horarios.append(Horario(row, cupo, inscripciones))
     return horarios
 
@@ -232,14 +254,15 @@ class Inscripcion:
         self.horario = horario
 
 
-def listar_inscripciones_de_horario(db, horario_id):
+def listar_inscripciones_de_horario(db, horario_id, semana):
     rows = db.execute(
         text(
             "SELECT i.*, c.id AS c_id, c.nombre AS c_nombre, c.dni AS c_dni, c.telefono AS c_telefono, "
             "c.email AS c_email, c.activo AS c_activo "
-            "FROM inscripciones i JOIN clientes c ON c.id = i.cliente_id WHERE i.horario_id = :hid"
+            "FROM inscripciones i JOIN clientes c ON c.id = i.cliente_id "
+            "WHERE i.horario_id = :hid AND i.semana = :semana"
         ),
-        {"hid": horario_id},
+        {"hid": horario_id, "semana": semana},
     ).mappings().fetchall()
     result = []
     for row in rows:
@@ -251,15 +274,15 @@ def listar_inscripciones_de_horario(db, horario_id):
     return result
 
 
-def listar_inscripciones_de_cliente(db, cliente_id):
+def listar_inscripciones_de_cliente(db, cliente_id, semana):
     rows = db.execute(
         text(
             "SELECT i.*, h.*, i.id AS i_id FROM inscripciones i JOIN horarios h ON h.id = i.horario_id "
-            "WHERE i.cliente_id = :cid AND i.activa = :activa "
+            "WHERE i.cliente_id = :cid AND i.activa = :activa AND i.semana = :semana "
             "ORDER BY CASE h.dia_semana " + " ".join(f"WHEN '{d}' THEN {n}" for n, d in enumerate(DIAS)) +
             " END, h.hora_inicio"
         ),
-        {"cid": cliente_id, "activa": True},
+        {"cid": cliente_id, "activa": True, "semana": semana},
     ).mappings().fetchall()
     result = []
     for row in rows:
@@ -422,6 +445,7 @@ def reservar():
     db = get_db()
     dni = request.form.get("dni", "").strip() or session.get("cliente_dni", "")
     horario_id = request.form["horario_id"]
+    semana_actual = inicio_semana(date.today())
 
     if not dni:
         flash("Necesitás ingresar tu DNI para reservar.", "error")
@@ -434,19 +458,19 @@ def reservar():
     identificar_cliente(cliente)
 
     horario_row = db.execute(text("SELECT * FROM horarios WHERE id = :hid"), {"hid": horario_id}).mappings().fetchone()
-    if not horario_row:
-        flash("Ese horario ya no existe.", "error")
+    if not horario_row or not horario_row["activo"]:
+        flash("Ese horario ya no está disponible.", "error")
         return redirect(url_for("index"))
 
     ya_inscripto = db.execute(
-        text("SELECT 1 FROM inscripciones WHERE cliente_id = :cid AND horario_id = :hid AND activa = :activa"),
-        {"cid": cliente.id, "hid": horario_id, "activa": True},
+        text("SELECT 1 FROM inscripciones WHERE cliente_id = :cid AND horario_id = :hid AND activa = :activa AND semana = :semana"),
+        {"cid": cliente.id, "hid": horario_id, "activa": True, "semana": semana_actual},
     ).fetchone()
     if ya_inscripto:
-        flash("Ya tenés una reserva en ese horario.", "error")
+        flash("Ya tenés una reserva en ese horario esta semana.", "error")
         return redirect(url_for("index"))
 
-    cupo = _cupo_disponible(db, horario_id, horario_row["cupo_maximo"])
+    cupo = _cupo_disponible(db, horario_id, horario_row["cupo_maximo"], semana_actual)
     if cupo <= 0:
         flash("Ese horario ya no tiene cupo disponible.", "error")
         return redirect(url_for("index"))
@@ -456,11 +480,14 @@ def reservar():
         {"cid": cliente.id, "hid": horario_id},
     ).mappings().fetchone()
     if existente:
-        db.execute(text("UPDATE inscripciones SET activa = :activa WHERE id = :id"), {"activa": True, "id": existente["id"]})
+        db.execute(
+            text("UPDATE inscripciones SET activa = :activa, semana = :semana WHERE id = :id"),
+            {"activa": True, "semana": semana_actual, "id": existente["id"]},
+        )
     else:
         db.execute(
-            text("INSERT INTO inscripciones (cliente_id, horario_id, activa) VALUES (:cid, :hid, :activa)"),
-            {"cid": cliente.id, "hid": horario_id, "activa": True},
+            text("INSERT INTO inscripciones (cliente_id, horario_id, activa, semana) VALUES (:cid, :hid, :activa, :semana)"),
+            {"cid": cliente.id, "hid": horario_id, "activa": True, "semana": semana_actual},
         )
     db.commit()
     flash("¡Turno reservado!", "success")
@@ -478,7 +505,7 @@ def mi_cuenta():
         cliente = obtener_cliente_por_dni(db, dni)
         if cliente:
             identificar_cliente(cliente)
-            inscripciones = listar_inscripciones_de_cliente(db, cliente.id)
+            inscripciones = listar_inscripciones_de_cliente(db, cliente.id, inicio_semana(date.today()))
     config = obtener_config(db)
     mensaje = (
         f"Hola! Soy {cliente.nombre} (DNI {cliente.dni}), te envío el comprobante de mi pago."
@@ -645,17 +672,28 @@ def admin_horarios():
     if request.method == "POST":
         db.execute(
             text(
-                "INSERT INTO horarios (dia_semana, hora_inicio, hora_fin, etiqueta, cupo_maximo) "
-                "VALUES (:dia, :inicio, :fin, :etiqueta, :cupo)"
+                "INSERT INTO horarios (dia_semana, hora_inicio, hora_fin, etiqueta, cupo_maximo, activo) "
+                "VALUES (:dia, :inicio, :fin, :etiqueta, :cupo, :activo)"
             ),
             {
                 "dia": request.form["dia_semana"], "inicio": request.form["hora_inicio"], "fin": request.form["hora_fin"],
-                "etiqueta": request.form.get("etiqueta"), "cupo": int(request.form["cupo_maximo"]),
+                "etiqueta": request.form.get("etiqueta"), "cupo": int(request.form["cupo_maximo"]), "activo": True,
             },
         )
         db.commit()
         return redirect(url_for("admin_horarios"))
-    return render_template("admin/horarios.html", horarios=listar_horarios(db), dias=DIAS)
+    return render_template("admin/horarios.html", horarios=listar_horarios(db, solo_activos=False), dias=DIAS)
+
+
+@app.route("/admin/horarios/<int:horario_id>/cancelar", methods=["POST"])
+@admin_required
+def admin_horario_cancelar(horario_id):
+    db = get_db()
+    row = db.execute(text("SELECT activo FROM horarios WHERE id = :id"), {"id": horario_id}).mappings().fetchone()
+    if row:
+        db.execute(text("UPDATE horarios SET activo = :activo WHERE id = :id"), {"activo": not row["activo"], "id": horario_id})
+        db.commit()
+    return redirect(url_for("admin_horarios"))
 
 
 @app.route("/admin/horarios/<int:horario_id>/eliminar", methods=["POST"])
@@ -689,7 +727,7 @@ def admin_asistencia():
             db.rollback()
         return redirect(url_for("admin_asistencia", fecha=fecha_sel))
 
-    horarios = listar_horarios(db, dia_semana=dia_nombre, con_inscripciones=True)
+    horarios = listar_horarios(db, dia_semana=dia_nombre, con_inscripciones=True, semana=inicio_semana(fecha_dt))
     rows = db.execute(text("SELECT inscripcion_id FROM asistencias WHERE fecha = :fecha"), {"fecha": fecha_dt}).mappings().fetchall()
     asistencias_hoy = {r["inscripcion_id"] for r in rows}
     return render_template(

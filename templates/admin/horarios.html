@@ -38,16 +38,20 @@
   <div class="col-md-7">
     <h5>Horarios existentes</h5>
     <table class="table table-striped bg-white">
-      <thead><tr><th>Día</th><th>Hora</th><th>Etiqueta</th><th>Cupo</th><th></th></tr></thead>
+      <thead><tr><th>Día</th><th>Hora</th><th>Etiqueta</th><th>Cupo</th><th>Estado</th><th></th></tr></thead>
       <tbody>
         {% for h in horarios %}
-        <tr>
+        <tr class="{{ 'table-secondary' if not h.activo }}">
           <td>{{ h.dia_semana }}</td>
           <td>{{ h.hora_inicio }}-{{ h.hora_fin }}</td>
           <td>{{ h.etiqueta or '-' }}</td>
           <td>{{ h.cupo_disponible }}/{{ h.cupo_maximo }}</td>
-          <td>
-            <form method="POST" action="{{ url_for('admin_horario_eliminar', horario_id=h.id) }}" onsubmit="return confirm('¿Eliminar horario?');">
+          <td>{{ 'Activo' if h.activo else 'Cancelado' }}</td>
+          <td class="d-flex gap-1">
+            <form method="POST" action="{{ url_for('admin_horario_cancelar', horario_id=h.id) }}">
+              <button type="submit" class="btn btn-sm btn-outline-warning">{{ 'Cancelar' if h.activo else 'Reactivar' }}</button>
+            </form>
+            <form method="POST" action="{{ url_for('admin_horario_eliminar', horario_id=h.id) }}" onsubmit="return confirm('¿Eliminar horario? También se borran sus reservas.');">
               <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
             </form>
           </td>
@@ -55,6 +59,7 @@
         {% endfor %}
       </tbody>
     </table>
+    <p class="text-muted small">"Cancelar" pausa la clase (no acepta reservas ni ocupa lugar en Asistencia) sin borrar el historial. "Eliminar" la borra para siempre, junto con sus reservas.</p>
   </div>
 </div>
 {% endblock %}
