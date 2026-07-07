@@ -51,6 +51,7 @@ pagos_t = Table(
     Column("dias_validez", Integer, nullable=False),
     Column("fecha_vencimiento", Date, nullable=False),
     Column("nota", String),
+    Column("cupos_totales", Integer),
 )
 
 horarios_t = Table(
@@ -122,12 +123,15 @@ def init_db():
     inspector = inspect(engine)
     horarios_cols = {c["name"] for c in inspector.get_columns("horarios")}
     inscripciones_cols = {c["name"] for c in inspector.get_columns("inscripciones")}
+    pagos_cols = {c["name"] for c in inspector.get_columns("pagos")}
     with engine.begin() as conn:
         # Migraciones livianas para bases ya desplegadas antes de estas columnas existir.
         if "activo" not in horarios_cols:
             conn.execute(text("ALTER TABLE horarios ADD COLUMN activo BOOLEAN NOT NULL DEFAULT TRUE"))
         if "semana" not in inscripciones_cols:
             conn.execute(text("ALTER TABLE inscripciones ADD COLUMN semana DATE"))
+        if "cupos_totales" not in pagos_cols:
+            conn.execute(text("ALTER TABLE pagos ADD COLUMN cupos_totales INTEGER"))
         existe = conn.execute(text("SELECT 1 FROM configuracion WHERE id = 1")).fetchone()
         if not existe:
             conn.execute(text("INSERT INTO configuracion (id, alias_mp, whatsapp_numero) VALUES (1, '', '')"))
@@ -148,6 +152,9 @@ class Cliente:
         self.email = row["email"]
         self.activo = bool(row["activo"])
         self.proximo_vencimiento = proximo_vencimiento
+        self.cupos_totales = None
+        self.cupos_usados = None
+        self.cupos_restantes = None
 
     @property
     def abono_vencido(self):
@@ -164,11 +171,26 @@ def _to_date(value):
 
 def _cliente_con_vencimiento(db, row):
     ultimo = db.execute(
-        text("SELECT fecha_vencimiento FROM pagos WHERE cliente_id = :cid ORDER BY fecha_vencimiento DESC LIMIT 1"),
+        text(
+            "SELECT fecha_pago, fecha_vencimiento, cupos_totales FROM pagos "
+            "WHERE cliente_id = :cid ORDER BY fecha_vencimiento DESC LIMIT 1"
+        ),
         {"cid": row["id"]},
     ).mappings().fetchone()
     vencimiento = _to_date(ultimo["fecha_vencimiento"]) if ultimo else None
-    return Cliente(row, vencimiento)
+    cliente = Cliente(row, vencimiento)
+    if ultimo and ultimo["cupos_totales"] is not None:
+        usados = db.execute(
+            text(
+                "SELECT COUNT(*) AS c FROM asistencias a JOIN inscripciones i ON i.id = a.inscripcion_id "
+                "WHERE i.cliente_id = :cid AND a.fecha >= :fecha_desde"
+            ),
+            {"cid": row["id"], "fecha_desde": _to_date(ultimo["fecha_pago"])},
+        ).mappings().fetchone()["c"]
+        cliente.cupos_totales = ultimo["cupos_totales"]
+        cliente.cupos_usados = usados
+        cliente.cupos_restantes = max(ultimo["cupos_totales"] - usados, 0)
+    return cliente
 
 
 def listar_clientes(db, solo_activos=False):
@@ -289,6 +311,7 @@ def listar_inscripciones_de_cliente(db, cliente_id, semana):
         horario_row = {
             "id": row["horario_id"], "dia_semana": row["dia_semana"], "hora_inicio": row["hora_inicio"],
             "hora_fin": row["hora_fin"], "etiqueta": row["etiqueta"], "cupo_maximo": row["cupo_maximo"],
+            "activo": row["activo"],
         }
         horario = Horario(horario_row, cupo_disponible=None)
         insc_row = {"id": row["i_id"], "cliente_id": row["cliente_id"], "horario_id": row["horario_id"], "activa": row["activa"]}
@@ -305,6 +328,7 @@ class Pago:
         self.dias_validez = row["dias_validez"]
         self.fecha_vencimiento = _to_date(row["fecha_vencimiento"])
         self.nota = row["nota"]
+        self.cupos_totales = row["cupos_totales"]
 
 
 def listar_pagos(db, limit=20):
@@ -643,14 +667,16 @@ def admin_pagos():
         fecha_pago = date.fromisoformat(request.form["fecha_pago"])
         dias_validez = int(request.form["dias_validez"])
         fecha_vencimiento = fecha_pago + timedelta(days=dias_validez)
+        cupos_raw = request.form.get("cupos_totales", "").strip()
         db.execute(
             text(
-                "INSERT INTO pagos (cliente_id, fecha_pago, monto, dias_validez, fecha_vencimiento, nota) "
-                "VALUES (:cid, :fecha_pago, :monto, :dias_validez, :fecha_vencimiento, :nota)"
+                "INSERT INTO pagos (cliente_id, fecha_pago, monto, dias_validez, fecha_vencimiento, nota, cupos_totales) "
+                "VALUES (:cid, :fecha_pago, :monto, :dias_validez, :fecha_vencimiento, :nota, :cupos_totales)"
             ),
             {
                 "cid": request.form["cliente_id"], "fecha_pago": fecha_pago, "monto": float(request.form["monto"]),
                 "dias_validez": dias_validez, "fecha_vencimiento": fecha_vencimiento, "nota": request.form.get("nota"),
+                "cupos_totales": int(cupos_raw) if cupos_raw else None,
             },
         )
         db.commit()

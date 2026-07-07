@@ -23,10 +23,16 @@
   <div class="card-body">
     <h5>{{ cliente.nombre }} <a class="small" href="{{ url_for('salir_cliente') }}">¿No sos vos?</a></h5>
     {% if cliente.proximo_vencimiento %}
-      <p>
+      <p class="mb-1">
         Tu abono vence el <strong>{{ cliente.proximo_vencimiento.strftime('%d/%m/%Y') }}</strong>
         {% if cliente.abono_vencido %}<span class="badge badge-vencido">Vencido</span>{% endif %}
       </p>
+      {% if cliente.cupos_totales is not none %}
+      <p class="mb-0">
+        Cupos utilizados: <strong>{{ cliente.cupos_usados }}</strong> ·
+        Cupos restantes: <strong>{{ cliente.cupos_restantes }}</strong> (de {{ cliente.cupos_totales }})
+      </p>
+      {% endif %}
     {% else %}
       <p class="text-muted">Todavía no registramos ningún pago.</p>
     {% endif %}
