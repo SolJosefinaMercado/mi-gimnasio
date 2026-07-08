@@ -160,6 +160,18 @@ class Cliente:
     def abono_vencido(self):
         return self.proximo_vencimiento is not None and self.proximo_vencimiento < date.today()
 
+    @property
+    def abono_impago(self):
+        return self.proximo_vencimiento is None or self.abono_vencido
+
+    @property
+    def sin_cupos(self):
+        return self.cupos_totales is not None and self.cupos_restantes <= 0
+
+    @property
+    def puede_reservar(self):
+        return not self.abono_impago and not self.sin_cupos
+
 
 def _to_date(value):
     # SQL crudo vía text() no aplica el result_processor de SQLAlchemy: sqlite3
@@ -480,6 +492,13 @@ def reservar():
         flash("No encontramos un cliente activo con ese DNI. Consultá con el gimnasio.", "error")
         return redirect(url_for("index"))
     identificar_cliente(cliente)
+
+    if cliente.abono_impago:
+        flash("No se permite la reserva por abono impago o vencido.", "error")
+        return redirect(url_for("index"))
+    if cliente.sin_cupos:
+        flash("No se permite la reserva: ya usaste todos los cupos de tu abono.", "error")
+        return redirect(url_for("index"))
 
     horario_row = db.execute(text("SELECT * FROM horarios WHERE id = :hid"), {"hid": horario_id}).mappings().fetchone()
     if not horario_row or not horario_row["activo"]:

@@ -14,10 +14,22 @@
 
 <h2 class="mb-4">Reservá tu turno</h2>
 {% if cliente_actual %}
-<p class="text-muted">
-  Hola, <strong>{{ cliente_actual.nombre }}</strong> · así que ya podés reservar con un click.
-  <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
-</p>
+  {% if cliente_actual.abono_impago %}
+  <div class="alert alert-danger">
+    No se permite la reserva por abono impago o vencido. Contactate con el gimnasio para regularizarlo.
+    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
+  </div>
+  {% elif cliente_actual.sin_cupos %}
+  <div class="alert alert-danger">
+    No se permite la reserva: ya usaste todos los cupos de tu abono ({{ cliente_actual.cupos_totales }}).
+    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
+  </div>
+  {% else %}
+  <p class="text-muted">
+    Hola, <strong>{{ cliente_actual.nombre }}</strong> · así que ya podés reservar con un click.
+    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
+  </p>
+  {% endif %}
 {% else %}
 <p class="text-muted">Elegí un horario e ingresá tu DNI (el que le diste al gimnasio) para reservar tu lugar. La próxima vez no vas a tener que volver a escribirlo.</p>
 {% endif %}
@@ -40,7 +52,9 @@
           Anotados: {% if activas %}{% for insc in activas %}{{ insc.cliente.nombre.split(' ')[0] }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}nadie todavía{% endif %}
         </p>
         {% if h.cupo_disponible > 0 %}
-          {% if cliente_actual %}
+          {% if cliente_actual and not cliente_actual.puede_reservar %}
+          <span class="badge bg-danger">Reserva bloqueada</span>
+          {% elif cliente_actual %}
           <form method="POST" action="{{ url_for('reservar') }}">
             <input type="hidden" name="horario_id" value="{{ h.id }}">
             <button type="submit" class="btn btn-sm btn-primary text-nowrap">Reservar horario ✅</button>
