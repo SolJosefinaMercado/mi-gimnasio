@@ -2,6 +2,7 @@ import os
 from datetime import date, datetime, timedelta
 from functools import wraps
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from flask import Flask, g, redirect, render_template, request, session, url_for, flash
 from sqlalchemy import (
@@ -13,6 +14,11 @@ from sqlalchemy.exc import IntegrityError
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+TZ_LOCAL = ZoneInfo("America/Argentina/Buenos_Aires")
+
+
+def hoy():
+    return datetime.now(TZ_LOCAL).date()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -138,7 +144,10 @@ def init_db():
 
 
 def inicio_semana(fecha):
-    return fecha - timedelta(days=fecha.weekday())
+    # La "semana" de cupos arranca el sábado a las 00:00 (hora Argentina), no el lunes:
+    # así lo que se reserva el fin de semana para el lunes cae en el mismo ciclo.
+    dias_desde_sabado = (fecha.weekday() - 5) % 7
+    return fecha - timedelta(days=dias_desde_sabado)
 
 
 # ---------- Modelos livianos sobre filas de la base ----------
@@ -158,7 +167,7 @@ class Cliente:
 
     @property
     def abono_vencido(self):
-        return self.proximo_vencimiento is not None and self.proximo_vencimiento < date.today()
+        return self.proximo_vencimiento is not None and self.proximo_vencimiento < hoy()
 
     @property
     def abono_impago(self):
@@ -252,7 +261,7 @@ def _cupo_disponible(db, horario_id, cupo_maximo, semana):
 
 
 def listar_horarios(db, dia_semana=None, con_inscripciones=False, solo_activos=True, semana=None):
-    semana = semana or inicio_semana(date.today())
+    semana = semana or inicio_semana(hoy())
     query = "SELECT * FROM horarios"
     conditions = []
     params = {}
@@ -466,7 +475,7 @@ def index():
     return render_template(
         "index.html", horarios_por_dia=horarios_por_dia, cliente_actual=cliente_de_sesion(db),
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
-        entrenamiento_hoy=obtener_entrenamiento(db, date.today()),
+        entrenamiento_hoy=obtener_entrenamiento(db, hoy()),
     )
 
 
@@ -481,7 +490,7 @@ def reservar():
     db = get_db()
     dni = request.form.get("dni", "").strip() or session.get("cliente_dni", "")
     horario_id = request.form["horario_id"]
-    semana_actual = inicio_semana(date.today())
+    semana_actual = inicio_semana(hoy())
 
     if not dni:
         flash("Necesitás ingresar tu DNI para reservar.", "error")
@@ -548,7 +557,7 @@ def mi_cuenta():
         cliente = obtener_cliente_por_dni(db, dni)
         if cliente:
             identificar_cliente(cliente)
-            inscripciones = listar_inscripciones_de_cliente(db, cliente.id, inicio_semana(date.today()))
+            inscripciones = listar_inscripciones_de_cliente(db, cliente.id, inicio_semana(hoy()))
     config = obtener_config(db)
     mensaje = (
         f"Hola! Soy {cliente.nombre} (DNI {cliente.dni}), te envío el comprobante de mi pago."
@@ -604,7 +613,7 @@ def admin_dashboard():
     db = get_db()
     clientes = listar_clientes(db, solo_activos=True)
     vencidos = [c for c in clientes if c.abono_vencido]
-    hoy_nombre = DIAS[datetime.today().weekday()]
+    hoy_nombre = DIAS[hoy().weekday()]
     turnos_hoy = listar_horarios(db, dia_semana=hoy_nombre)
     return render_template(
         "admin/dashboard.html",
@@ -704,7 +713,7 @@ def admin_pagos():
         "admin/pagos.html",
         clientes=listar_clientes(db, solo_activos=True),
         pagos=listar_pagos(db),
-        today=date.today().isoformat(),
+        today=hoy().isoformat(),
     )
 
 
@@ -756,7 +765,7 @@ def admin_horario_eliminar(horario_id):
 @admin_required
 def admin_asistencia():
     db = get_db()
-    fecha_sel = request.values.get("fecha") or date.today().isoformat()
+    fecha_sel = request.values.get("fecha") or hoy().isoformat()
     fecha_dt = date.fromisoformat(fecha_sel)
     dia_nombre = DIAS[fecha_dt.weekday()]
 
@@ -790,7 +799,7 @@ def admin_asistencia():
 @admin_required
 def admin_entrenamiento():
     db = get_db()
-    fecha_sel = request.values.get("fecha") or date.today().isoformat()
+    fecha_sel = request.values.get("fecha") or hoy().isoformat()
     fecha_dt = date.fromisoformat(fecha_sel)
 
     if request.method == "POST":
@@ -801,7 +810,7 @@ def admin_entrenamiento():
         "admin/entrenamiento.html",
         fecha_sel=fecha_sel,
         entrenamiento=obtener_entrenamiento(db, fecha_dt),
-        es_hoy=fecha_sel == date.today().isoformat(),
+        es_hoy=fecha_sel == hoy().isoformat(),
     )
 
 

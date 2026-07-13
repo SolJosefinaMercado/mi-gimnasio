@@ -2,3 +2,4 @@ Flask==3.0.3
 gunicorn==22.0.0
 SQLAlchemy==2.0.35
 psycopg[binary]==3.3.4
+tzdata
