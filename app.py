@@ -150,6 +150,14 @@ def inicio_semana(fecha):
     return fecha - timedelta(days=dias_desde_sabado)
 
 
+ORDEN_DESDE_SABADO = ["Sábado", "Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+
+
+def fecha_de_clase(semana, dia_semana):
+    # Fecha calendario real de esa clase dentro del ciclo (semana = sábado que lo inicia).
+    return semana + timedelta(days=ORDEN_DESDE_SABADO.index(dia_semana))
+
+
 # ---------- Modelos livianos sobre filas de la base ----------
 
 class Cliente:
@@ -240,7 +248,7 @@ def obtener_cliente_por_id(db, cliente_id):
 
 
 class Horario:
-    def __init__(self, row, cupo_disponible, inscripciones=None):
+    def __init__(self, row, cupo_disponible, inscripciones=None, fecha_clase=None):
         self.id = row["id"]
         self.dia_semana = row["dia_semana"]
         self.hora_inicio = row["hora_inicio"]
@@ -250,6 +258,7 @@ class Horario:
         self.cupo_disponible = cupo_disponible
         self.inscripciones = inscripciones or []
         self.activo = bool(row["activo"])
+        self.fecha_clase = fecha_clase
 
 
 def _cupo_disponible(db, horario_id, cupo_maximo, semana):
@@ -283,7 +292,7 @@ def listar_horarios(db, dia_semana=None, con_inscripciones=False, solo_activos=T
         inscripciones = []
         if con_inscripciones:
             inscripciones = listar_inscripciones_de_horario(db, row["id"], semana)
-        horarios.append(Horario(row, cupo, inscripciones))
+        horarios.append(Horario(row, cupo, inscripciones, fecha_de_clase(semana, row["dia_semana"])))
     return horarios
 
 
@@ -512,6 +521,15 @@ def reservar():
     horario_row = db.execute(text("SELECT * FROM horarios WHERE id = :hid"), {"hid": horario_id}).mappings().fetchone()
     if not horario_row or not horario_row["activo"]:
         flash("Ese horario ya no está disponible.", "error")
+        return redirect(url_for("index"))
+
+    fecha_clase = fecha_de_clase(semana_actual, horario_row["dia_semana"])
+    if fecha_clase > cliente.proximo_vencimiento:
+        flash(
+            f"No se permite la reserva: esa clase es el {fecha_clase.strftime('%d/%m/%Y')}, "
+            f"posterior al vencimiento de tu abono ({cliente.proximo_vencimiento.strftime('%d/%m/%Y')}).",
+            "error",
+        )
         return redirect(url_for("index"))
 
     ya_inscripto = db.execute(

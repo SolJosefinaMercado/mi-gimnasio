@@ -54,6 +54,8 @@
         {% if h.cupo_disponible > 0 %}
           {% if cliente_actual and not cliente_actual.puede_reservar %}
           <span class="badge bg-danger">Reserva bloqueada</span>
+          {% elif cliente_actual and cliente_actual.proximo_vencimiento and h.fecha_clase > cliente_actual.proximo_vencimiento %}
+          <span class="badge bg-danger" title="Esta clase es el {{ h.fecha_clase.strftime('%d/%m/%Y') }}, posterior al vencimiento de tu abono">Fuera de tu abono</span>
           {% elif cliente_actual %}
           <form method="POST" action="{{ url_for('reservar') }}">
             <input type="hidden" name="horario_id" value="{{ h.id }}">
