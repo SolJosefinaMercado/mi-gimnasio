@@ -1,19 +1,108 @@
+:root {
+  --brand: #FFF587;
+  --brand-dark: #e8dd3f;
+  --ink: #1c1f26;
+  --ink-soft: #565c66;
+  --surface: #ffffff;
+  --bg: #f4f5f7;
+  --border: #e7e8ec;
+  --ok: #1f8a4c;
+  --ok-bg: #e8f7ee;
+  --warn: #b9770e;
+  --warn-bg: #fdf3e0;
+  --danger: #d6334c;
+  --danger-bg: #fbe9ec;
+  --muted-bg: #eceef1;
+  --radius: 14px;
+}
+
 body {
-  background-color: #f7f7f9;
+  background-color: var(--bg);
+  color: var(--ink);
 }
-.card {
-  margin-bottom: 1rem;
+
+/* ---------- Navbar ---------- */
+.navbar {
+  background-color: var(--ink) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
 }
-.badge-vencido {
-  background-color: #dc3545;
-}
+
 .btn-brand-turnos {
-  background-color: #FFF587;
-  color: #212529;
-  border-color: #FFF587;
+  background-color: var(--brand);
+  color: var(--ink);
+  border-color: var(--brand);
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 .btn-brand-turnos:hover {
-  background-color: #f7ea5c;
-  color: #212529;
-  border-color: #f7ea5c;
+  background-color: var(--brand-dark);
+  color: var(--ink);
+  border-color: var(--brand-dark);
+}
+
+/* ---------- Cards ---------- */
+.card {
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(20, 20, 30, 0.04);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.card:hover {
+  box-shadow: 0 6px 16px rgba(20, 20, 30, 0.08);
+}
+
+.horario-card .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.horario-card .horario-hora {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.horario-card .horario-etiqueta {
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+/* ---------- Estados / badges ---------- */
+.badge-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.badge-disponible { background: var(--ok-bg); color: var(--ok); }
+.badge-cierra-pronto { background: var(--warn-bg); color: var(--warn); }
+.badge-sin-cupo { background: var(--muted-bg); color: var(--ink-soft); }
+.badge-bloqueado, .badge-vencido { background: var(--danger-bg); color: var(--danger); }
+
+/* ---------- Notificaciones (avisos de pago cargado, etc.) ---------- */
+.notificacion-card {
+  border: 1px solid var(--ok);
+  background: var(--ok-bg);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+.notificacion-card .bi {
+  color: var(--ok);
+  font-size: 1.2rem;
+  margin-top: 0.1rem;
+}
+
+/* ---------- Utilidades ---------- */
+.text-ink-soft { color: var(--ink-soft); }
+.section-title {
+  font-weight: 700;
+  margin-top: 1.75rem;
+  margin-bottom: 0.9rem;
 }

@@ -1,10 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Horarios y reservas{% endblock %}
 {% block content %}
+
+{% for n in notificaciones %}
+<div class="notificacion-card">
+  <i class="bi bi-check-circle-fill"></i>
+  <div>{{ n.mensaje }}</div>
+</div>
+{% endfor %}
+
 {% if entrenamiento_hoy %}
 <div class="card mb-4 border-success">
   <div class="card-body">
-    <h5 class="card-title">Entrenamiento de hoy</h5>
+    <h5 class="card-title d-flex align-items-center gap-2"><i class="bi bi-clipboard2-pulse"></i> Entrenamiento de hoy</h5>
     <p class="card-text" style="white-space: pre-wrap;">{{ entrenamiento_hoy.contenido }}</p>
   </div>
 </div>
@@ -12,64 +20,76 @@
 
 {% include "_aviso_pago.html" %}
 
-<h2 class="mb-4">Reservá tu turno</h2>
+<h2 class="mb-3">Reservá tu turno</h2>
 {% if cliente_actual %}
   {% if cliente_actual.abono_impago %}
-  <div class="alert alert-danger">
-    No se permite la reserva por abono impago o vencido. Contactate con el gimnasio para regularizarlo.
-    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
+  <div class="alert alert-danger d-flex align-items-center gap-2">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <span>No se permite la reserva por abono impago o vencido. Contactate con el gimnasio para regularizarlo.
+    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a></span>
   </div>
   {% elif cliente_actual.sin_cupos %}
-  <div class="alert alert-danger">
-    No se permite la reserva: ya usaste todos los cupos de tu abono ({{ cliente_actual.cupos_totales }}).
-    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
+  <div class="alert alert-danger d-flex align-items-center gap-2">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <span>No se permite la reserva: ya usaste todos los cupos de tu abono ({{ cliente_actual.cupos_totales }}).
+    <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a></span>
   </div>
   {% else %}
-  <p class="text-muted">
+  <p class="text-ink-soft mb-4">
     Hola, <strong>{{ cliente_actual.nombre }}</strong> · así que ya podés reservar con un click.
     <a href="{{ url_for('salir_cliente') }}">¿No sos vos?</a>
   </p>
   {% endif %}
 {% else %}
-<p class="text-muted">Elegí un horario e ingresá tu DNI (el que le diste al gimnasio) para reservar tu lugar. La próxima vez no vas a tener que volver a escribirlo.</p>
+<p class="text-ink-soft mb-4">Elegí un horario e ingresá tu DNI (el que le diste al gimnasio) para reservar tu lugar. La próxima vez no vas a tener que volver a escribirlo.</p>
 {% endif %}
 
 {% if not horarios_por_dia %}
-<p class="text-muted">Todavía no hay horarios cargados.</p>
+<p class="text-ink-soft">Todavía no hay horarios cargados.</p>
 {% endif %}
 
 {% for dia, horarios in horarios_por_dia.items() %}
-<h5 class="mt-4">{{ dia }}</h5>
+<h5 class="section-title"><i class="bi bi-calendar-week me-1"></i> {{ dia }}</h5>
 <div class="row">
   {% for h in horarios %}
   {% set activas = h.inscripciones | selectattr('activa') | list %}
   <div class="col-md-4">
-    <div class="card">
+    <div class="card horario-card">
       <div class="card-body">
-        <h6>{{ h.hora_inicio }}-{{ h.hora_fin }} {% if h.etiqueta %}· {{ h.etiqueta }}{% endif %}</h6>
-        <p class="text-muted mb-1">Cupo: {{ h.cupo_disponible }}/{{ h.cupo_maximo }}</p>
-        <p class="text-muted small mb-2">
-          Anotados: {% if activas %}{% for insc in activas %}{{ insc.cliente.nombre.split(' ')[0] }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}nadie todavía{% endif %}
+        <div>
+          <span class="horario-hora">{{ h.hora_inicio }}-{{ h.hora_fin }}</span>
+          {% if h.etiqueta %}<span class="horario-etiqueta">· {{ h.etiqueta }}</span>{% endif %}
+        </div>
+        <p class="text-ink-soft mb-0 small">
+          <i class="bi bi-people"></i> Cupo: {{ h.cupo_disponible }}/{{ h.cupo_maximo }}
         </p>
-        {% if h.cupo_disponible > 0 %}
-          {% if cliente_actual and not cliente_actual.puede_reservar %}
-          <span class="badge bg-danger">Reserva bloqueada</span>
-          {% elif cliente_actual and cliente_actual.proximo_vencimiento and h.fecha_clase > cliente_actual.proximo_vencimiento %}
-          <span class="badge bg-danger" title="Esta clase es el {{ h.fecha_clase.strftime('%d/%m/%Y') }}, posterior al vencimiento de tu abono">Fuera de tu abono</span>
-          {% elif cliente_actual %}
+        <p class="text-ink-soft small mb-1">
+          {% if activas %}{% for insc in activas %}{{ insc.cliente.nombre.split(' ')[0] }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Nadie anotado todavía{% endif %}
+        </p>
+
+        {% if h.cupo_disponible <= 0 %}
+          <span class="badge-estado badge-sin-cupo"><i class="bi bi-slash-circle"></i> Sin cupo</span>
+        {% elif h.cerrado_por_tiempo %}
+          <span class="badge-estado badge-cierra-pronto" title="Las reservas cierran 15 minutos antes de cada clase">
+            <i class="bi bi-clock-history"></i> Reservas cerradas
+          </span>
+        {% elif cliente_actual and not cliente_actual.puede_reservar %}
+          <span class="badge-estado badge-bloqueado"><i class="bi bi-x-circle"></i> Reserva bloqueada</span>
+        {% elif cliente_actual and cliente_actual.proximo_vencimiento and h.fecha_clase > cliente_actual.proximo_vencimiento %}
+          <span class="badge-estado badge-bloqueado" title="Esta clase es el {{ h.fecha_clase.strftime('%d/%m/%Y') }}, posterior al vencimiento de tu abono">
+            <i class="bi bi-x-circle"></i> Fuera de tu abono
+          </span>
+        {% elif cliente_actual %}
           <form method="POST" action="{{ url_for('reservar') }}">
             <input type="hidden" name="horario_id" value="{{ h.id }}">
-            <button type="submit" class="btn btn-sm btn-primary text-nowrap">Reservar horario ✅</button>
+            <button type="submit" class="btn btn-sm btn-primary text-nowrap"><i class="bi bi-check2-circle"></i> Reservar horario</button>
           </form>
-          {% else %}
+        {% else %}
           <form method="POST" action="{{ url_for('reservar') }}" class="d-flex gap-2">
             <input type="hidden" name="horario_id" value="{{ h.id }}">
             <input type="text" name="dni" class="form-control form-control-sm" placeholder="Tu DNI" required>
             <button type="submit" class="btn btn-sm btn-primary text-nowrap">Reservar</button>
           </form>
-          {% endif %}
-        {% else %}
-        <span class="badge bg-secondary">Sin cupo</span>
         {% endif %}
       </div>
     </div>

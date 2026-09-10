@@ -5,6 +5,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from flask import Flask, g, redirect, render_template, request, session, url_for, flash
+import requests
 from sqlalchemy import (
     Boolean, Column, Date, Float, ForeignKey, Integer, MetaData, String,
     Table, Text, UniqueConstraint, create_engine, inspect, text,
@@ -24,6 +25,11 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 app.permanent_session_lifetime = timedelta(days=180)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")
+WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID")
+WHATSAPP_TEMPLATE_NAME = os.environ.get("WHATSAPP_TEMPLATE_NAME", "aviso_pago")
+WHATSAPP_TEMPLATE_LANG = os.environ.get("WHATSAPP_TEMPLATE_LANG", "es_AR")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
@@ -110,6 +116,17 @@ entrenamientos_t = Table(
     Column("contenido", Text, nullable=False),
 )
 
+notificaciones_t = Table(
+    "notificaciones", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("cliente_id", Integer, ForeignKey("clientes.id", ondelete="CASCADE"), nullable=False),
+    Column("mensaje", String, nullable=False),
+    Column("leida", Boolean, nullable=False, default=False),
+    Column("fecha", Date, nullable=False),
+)
+
+MINUTOS_LIMITE_RESERVA = 15
+
 
 def get_db():
     if "db" not in g:
@@ -156,6 +173,19 @@ ORDEN_DESDE_SABADO = ["Sábado", "Domingo", "Lunes", "Martes", "Miércoles", "Ju
 def fecha_de_clase(semana, dia_semana):
     # Fecha calendario real de esa clase dentro del ciclo (semana = sábado que lo inicia).
     return semana + timedelta(days=ORDEN_DESDE_SABADO.index(dia_semana))
+
+
+def datetime_clase(fecha_clase, hora_inicio):
+    # Combina la fecha calendario de la clase con su hora de inicio ("HH:MM") en un
+    # datetime con timezone, para poder compararlo contra "ahora".
+    hh, mm = (int(p) for p in hora_inicio.split(":"))
+    return datetime.combine(fecha_clase, datetime.min.time(), tzinfo=TZ_LOCAL).replace(hour=hh, minute=mm)
+
+
+def reserva_cerrada_por_tiempo(fecha_clase, hora_inicio):
+    inicio_clase = datetime_clase(fecha_clase, hora_inicio)
+    ahora = datetime.now(TZ_LOCAL)
+    return inicio_clase - ahora < timedelta(minutes=MINUTOS_LIMITE_RESERVA)
 
 
 # ---------- Modelos livianos sobre filas de la base ----------
@@ -259,6 +289,12 @@ class Horario:
         self.inscripciones = inscripciones or []
         self.activo = bool(row["activo"])
         self.fecha_clase = fecha_clase
+
+    @property
+    def cerrado_por_tiempo(self):
+        if not self.fecha_clase:
+            return False
+        return reserva_cerrada_por_tiempo(self.fecha_clase, self.hora_inicio)
 
 
 def _cupo_disponible(db, horario_id, cupo_maximo, semana):
@@ -439,6 +475,96 @@ def guardar_entrenamiento(db, fecha, contenido):
     db.commit()
 
 
+# ---------- Notificaciones ----------
+
+class Notificacion:
+    def __init__(self, row):
+        self.id = row["id"]
+        self.mensaje = row["mensaje"]
+        self.leida = bool(row["leida"])
+        self.fecha = _to_date(row["fecha"])
+
+
+def crear_notificacion(db, cliente_id, mensaje):
+    db.execute(
+        text("INSERT INTO notificaciones (cliente_id, mensaje, leida, fecha) VALUES (:cid, :mensaje, :leida, :fecha)"),
+        {"cid": cliente_id, "mensaje": mensaje, "leida": False, "fecha": hoy()},
+    )
+
+
+def listar_notificaciones_no_leidas(db, cliente_id):
+    rows = db.execute(
+        text(
+            "SELECT * FROM notificaciones WHERE cliente_id = :cid AND leida = :leida ORDER BY id DESC"
+        ),
+        {"cid": cliente_id, "leida": False},
+    ).mappings().fetchall()
+    return [Notificacion(r) for r in rows]
+
+
+def marcar_notificaciones_leidas(db, cliente_id):
+    db.execute(
+        text("UPDATE notificaciones SET leida = :leida WHERE cliente_id = :cid"),
+        {"leida": True, "cid": cliente_id},
+    )
+    db.commit()
+
+
+def formatear_telefono_whatsapp(telefono):
+    # Normaliza a formato E.164 para Argentina: 54 9 <código de área><número>.
+    # Asume que el teléfono está cargado sin 0 inicial y sin "15" (formato moderno,
+    # el mismo que ya pide WhatsApp). Si el "15" está en el medio del número no se
+    # puede sacar de forma confiable sin saber el largo del código de área.
+    if not telefono:
+        return None
+    digitos = "".join(ch for ch in telefono if ch.isdigit())
+    if not digitos:
+        return None
+    if digitos.startswith("549"):
+        return digitos
+    if digitos.startswith("54"):
+        return "549" + digitos[2:]
+    if digitos.startswith("0"):
+        digitos = digitos[1:]
+    return "549" + digitos
+
+
+def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
+        return False, "WhatsApp no está configurado (faltan WHATSAPP_TOKEN / WHATSAPP_PHONE_ID)."
+    numero = formatear_telefono_whatsapp(telefono)
+    if not numero:
+        return False, "El cliente no tiene teléfono cargado."
+    try:
+        resp = requests.post(
+            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": numero,
+                "type": "template",
+                "template": {
+                    "name": WHATSAPP_TEMPLATE_NAME,
+                    "language": {"code": WHATSAPP_TEMPLATE_LANG},
+                    "components": [{
+                        "type": "body",
+                        "parameters": [
+                            {"type": "text", "text": nombre},
+                            {"type": "text", "text": f"{monto:,.2f}"},
+                            {"type": "text", "text": fecha_vencimiento.strftime("%d/%m/%Y")},
+                        ],
+                    }],
+                },
+            },
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
+        return True, None
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
 # ---------- Auth admin ----------
 
 def admin_required(view):
@@ -481,10 +607,14 @@ def index():
     whatsapp_link = construir_whatsapp_link(
         config.whatsapp_numero, "Hola! Te escribo para enviarte el comprobante de mi pago del abono."
     )
+    cliente_actual = cliente_de_sesion(db)
+    notificaciones = listar_notificaciones_no_leidas(db, cliente_actual.id) if cliente_actual else []
+    if notificaciones:
+        marcar_notificaciones_leidas(db, cliente_actual.id)
     return render_template(
-        "index.html", horarios_por_dia=horarios_por_dia, cliente_actual=cliente_de_sesion(db),
+        "index.html", horarios_por_dia=horarios_por_dia, cliente_actual=cliente_actual,
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
-        entrenamiento_hoy=obtener_entrenamiento(db, hoy()),
+        entrenamiento_hoy=obtener_entrenamiento(db, hoy()), notificaciones=notificaciones,
     )
 
 
@@ -524,6 +654,12 @@ def reservar():
         return redirect(url_for("index"))
 
     fecha_clase = fecha_de_clase(semana_actual, horario_row["dia_semana"])
+    if reserva_cerrada_por_tiempo(fecha_clase, horario_row["hora_inicio"]):
+        flash(
+            f"Ya no se puede reservar esta clase: falta menos de {MINUTOS_LIMITE_RESERVA} minutos para que empiece.",
+            "error",
+        )
+        return redirect(url_for("index"))
     if fecha_clase > cliente.proximo_vencimiento:
         flash(
             f"No se permite la reserva: esa clase es el {fecha_clase.strftime('%d/%m/%Y')}, "
@@ -570,12 +706,16 @@ def mi_cuenta():
     dni = request.args.get("dni", "").strip() or session.get("cliente_dni", "")
     cliente = None
     inscripciones = []
+    notificaciones = []
     buscado = bool(dni)
     if dni:
         cliente = obtener_cliente_por_dni(db, dni)
         if cliente:
             identificar_cliente(cliente)
             inscripciones = listar_inscripciones_de_cliente(db, cliente.id, inicio_semana(hoy()))
+            notificaciones = listar_notificaciones_no_leidas(db, cliente.id)
+            if notificaciones:
+                marcar_notificaciones_leidas(db, cliente.id)
     config = obtener_config(db)
     mensaje = (
         f"Hola! Soy {cliente.nombre} (DNI {cliente.dni}), te envío el comprobante de mi pago."
@@ -584,7 +724,7 @@ def mi_cuenta():
     whatsapp_link = construir_whatsapp_link(config.whatsapp_numero, mensaje)
     return render_template(
         "mi_cuenta.html", dni=dni, cliente=cliente, inscripciones=inscripciones, buscado=buscado,
-        planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
+        planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link, notificaciones=notificaciones,
     )
 
 
@@ -714,18 +854,32 @@ def admin_pagos():
         dias_validez = int(request.form["dias_validez"])
         fecha_vencimiento = fecha_pago + timedelta(days=dias_validez)
         cupos_raw = request.form.get("cupos_totales", "").strip()
+        cliente_id = request.form["cliente_id"]
+        monto = float(request.form["monto"])
         db.execute(
             text(
                 "INSERT INTO pagos (cliente_id, fecha_pago, monto, dias_validez, fecha_vencimiento, nota, cupos_totales) "
                 "VALUES (:cid, :fecha_pago, :monto, :dias_validez, :fecha_vencimiento, :nota, :cupos_totales)"
             ),
             {
-                "cid": request.form["cliente_id"], "fecha_pago": fecha_pago, "monto": float(request.form["monto"]),
+                "cid": cliente_id, "fecha_pago": fecha_pago, "monto": monto,
                 "dias_validez": dias_validez, "fecha_vencimiento": fecha_vencimiento, "nota": request.form.get("nota"),
                 "cupos_totales": int(cupos_raw) if cupos_raw else None,
             },
         )
+        crear_notificacion(
+            db, cliente_id,
+            f"Registramos tu pago de ${monto:,.2f}. Tu abono queda activo hasta el "
+            f"{fecha_vencimiento.strftime('%d/%m/%Y')}.",
+        )
         db.commit()
+
+        cliente = obtener_cliente_por_id(db, cliente_id)
+        if cliente:
+            enviado, error = enviar_whatsapp_pago(cliente.telefono, cliente.nombre, monto, fecha_vencimiento)
+            if not enviado:
+                flash(f"Pago registrado. Aviso in-app enviado, pero el WhatsApp no se pudo mandar: {error}", "warning")
+
         return redirect(url_for("admin_pagos"))
     return render_template(
         "admin/pagos.html",

@@ -3,3 +3,4 @@ gunicorn==22.0.0
 SQLAlchemy==2.0.35
 psycopg[binary]==3.3.4
 tzdata
+requests==2.32.3
