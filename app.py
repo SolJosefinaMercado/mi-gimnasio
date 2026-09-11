@@ -763,6 +763,100 @@ def admin_logout():
     return redirect(url_for("admin_login"))
 
 
+MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+MESES_LARGOS = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
+
+def _ultimo_dia_mes(anio, mes):
+    if mes == 12:
+        return date(anio, 12, 31)
+    return date(anio, mes + 1, 1) - timedelta(days=1)
+
+
+def _primer_pago(db):
+    row = db.execute(text("SELECT MIN(fecha_pago) AS f FROM pagos")).mappings().fetchone()
+    return _to_date(row["f"]) if row and row["f"] else None
+
+
+def resumen_ganancias(db, periodo="mes", anio_mes=None):
+    if periodo not in ("semana", "mes", "anio"):
+        periodo = "mes"
+    hoy_d = hoy()
+    buckets = []
+    mes_actual = {"anio": hoy_d.year, "mes": hoy_d.month}
+
+    if periodo == "semana":
+        if anio_mes:
+            yy, mm = anio_mes
+        else:
+            yy, mm = hoy_d.year, hoy_d.month
+        ultimo_dia = _ultimo_dia_mes(yy, mm).day
+        dia = 1
+        n = 1
+        while dia <= ultimo_dia:
+            fin_semana = min(dia + 6, ultimo_dia)
+            buckets.append({
+                "inicio": date(yy, mm, dia), "fin": date(yy, mm, fin_semana),
+                "label": f"Sem {n}",
+            })
+            dia += 7
+            n += 1
+        mes_actual = {"anio": yy, "mes": mm}
+    elif periodo == "anio":
+        for i in range(4, -1, -1):
+            anio_b = hoy_d.year - i
+            buckets.append({"inicio": date(anio_b, 1, 1), "fin": date(anio_b, 12, 31), "label": str(anio_b)})
+    else:
+        y, m = hoy_d.year, hoy_d.month
+        for i in range(11, -1, -1):
+            mm, yy = m - i, y
+            while mm <= 0:
+                mm += 12
+                yy -= 1
+            buckets.append({
+                "inicio": date(yy, mm, 1), "fin": _ultimo_dia_mes(yy, mm),
+                "label": f"{MESES_CORTOS[mm - 1]} {str(yy)[2:]}",
+            })
+
+    for b in buckets:
+        b["total"] = 0.0
+
+    desde = buckets[0]["inicio"] if buckets else hoy_d
+    hasta = buckets[-1]["fin"] if buckets else hoy_d
+    rows = db.execute(
+        text("SELECT fecha_pago, monto FROM pagos WHERE fecha_pago >= :desde AND fecha_pago <= :hasta"),
+        {"desde": desde, "hasta": hasta},
+    ).mappings().fetchall()
+    for r in rows:
+        f = _to_date(r["fecha_pago"])
+        for b in buckets:
+            if b["inicio"] <= f <= b["fin"]:
+                b["total"] += r["monto"]
+                break
+
+    total_periodo = sum(b["total"] for b in buckets)
+    resultado = {
+        "periodo": periodo, "buckets": buckets,
+        "total_actual": total_periodo if periodo == "semana" else (buckets[-1]["total"] if buckets else 0.0),
+    }
+
+    if periodo == "semana":
+        primer_pago = _primer_pago(db)
+        mes_minimo = (primer_pago.year, primer_pago.month) if primer_pago else (hoy_d.year, hoy_d.month)
+        mes_maximo = (hoy_d.year, hoy_d.month)
+        anio_actual, mes_num = mes_actual["anio"], mes_actual["mes"]
+        anio_prev, mes_prev = (anio_actual - 1, 12) if mes_num == 1 else (anio_actual, mes_num - 1)
+        anio_next, mes_next = (anio_actual + 1, 1) if mes_num == 12 else (anio_actual, mes_num + 1)
+        resultado["mes_actual"] = {"anio": anio_actual, "mes": mes_num, "label": f"{MESES_LARGOS[mes_num - 1]} {anio_actual}"}
+        resultado["mes_prev"] = {"anio": anio_prev, "mes": mes_prev} if (anio_prev, mes_prev) >= mes_minimo else None
+        resultado["mes_next"] = {"anio": anio_next, "mes": mes_next} if (anio_next, mes_next) <= mes_maximo else None
+
+    return resultado
+
+
 # ---------- Admin: dashboard ----------
 
 @app.route("/admin")
@@ -773,12 +867,21 @@ def admin_dashboard():
     vencidos = [c for c in clientes if c.abono_vencido]
     hoy_nombre = DIAS[hoy().weekday()]
     turnos_hoy = listar_horarios(db, dia_semana=hoy_nombre)
+    periodo = request.args.get("periodo", "mes")
+    anio_mes = None
+    if periodo == "semana":
+        try:
+            anio_mes = (int(request.args["anio"]), int(request.args["mes"]))
+        except (KeyError, ValueError):
+            anio_mes = None
+    ganancias = resumen_ganancias(db, periodo, anio_mes)
     return render_template(
         "admin/dashboard.html",
         total_clientes=len(clientes),
         vencidos=vencidos,
         hoy_nombre=hoy_nombre,
         turnos_hoy=turnos_hoy,
+        ganancias=ganancias,
     )
 
 

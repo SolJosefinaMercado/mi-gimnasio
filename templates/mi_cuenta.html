@@ -26,25 +26,33 @@
 {% endif %}
 
 {% if cliente %}
-<div class="card mb-4">
+<div class="card mb-3">
   <div class="card-body">
     <h5>{{ cliente.nombre }} <a class="small" href="{{ url_for('salir_cliente') }}">¿No sos vos?</a></h5>
-    {% if cliente.proximo_vencimiento %}
-      <p class="mb-1">
-        Tu abono vence el <strong>{{ cliente.proximo_vencimiento.strftime('%d/%m/%Y') }}</strong>
-        {% if cliente.abono_vencido %}<span class="badge-estado badge-vencido"><i class="bi bi-exclamation-triangle"></i> Vencido</span>{% endif %}
-      </p>
-      {% if cliente.cupos_totales is not none %}
-      <p class="mb-0 text-ink-soft">
-        Cupos utilizados: <strong>{{ cliente.cupos_usados }}</strong> ·
-        Cupos restantes: <strong>{{ cliente.cupos_restantes }}</strong> (de {{ cliente.cupos_totales }})
-      </p>
-      {% endif %}
-    {% else %}
-      <p class="text-ink-soft">Todavía no registramos ningún pago.</p>
+    {% if not cliente.proximo_vencimiento %}
+      <p class="text-ink-soft mb-0">Todavía no registramos ningún pago.</p>
+    {% elif cliente.abono_vencido %}
+      <span class="badge-estado badge-vencido"><i class="bi bi-exclamation-triangle"></i> Abono vencido</span>
     {% endif %}
   </div>
 </div>
+
+{% if cliente.proximo_vencimiento %}
+<div class="metricas-fila">
+  <div class="card metrica-mini">
+    <div class="metrica-valor">{{ cliente.cupos_totales if cliente.cupos_totales is not none else '—' }}</div>
+    <div class="metrica-label">Abonos totales</div>
+  </div>
+  <div class="card metrica-mini">
+    <div class="metrica-valor acento-violeta" style="font-size:1.1rem;">{{ cliente.proximo_vencimiento.strftime('%d/%m/%Y') }}</div>
+    <div class="metrica-label">Vencimiento</div>
+  </div>
+  <div class="card metrica-mini">
+    <div class="metrica-valor">{{ cliente.cupos_usados if cliente.cupos_totales is not none else '—' }}</div>
+    <div class="metrica-label">Abonos usados</div>
+  </div>
+</div>
+{% endif %}
 
 <h5 class="section-title">Tus turnos reservados</h5>
 {% if inscripciones %}

@@ -18,8 +18,6 @@
 </div>
 {% endif %}
 
-{% include "_aviso_pago.html" %}
-
 <h2 class="mb-3">Reservá tu turno</h2>
 {% if cliente_actual %}
   {% if cliente_actual.abono_impago %}
@@ -46,10 +44,16 @@
 
 {% if not horarios_por_dia %}
 <p class="text-ink-soft">Todavía no hay horarios cargados.</p>
+{% else %}
+<select id="diaSelect" class="form-select selector-dia mb-4">
+  {% for dia in horarios_por_dia.keys() %}
+  <option value="{{ dia }}">{{ dia }}</option>
+  {% endfor %}
+</select>
 {% endif %}
 
 {% for dia, horarios in horarios_por_dia.items() %}
-<h5 class="section-title"><i class="bi bi-calendar-week me-1"></i> {{ dia }}</h5>
+<div class="dia-bloque" data-dia="{{ dia }}">
 <div class="row">
   {% for h in horarios %}
   {% set activas = h.inscripciones | selectattr('activa') | list %}
@@ -96,5 +100,23 @@
   </div>
   {% endfor %}
 </div>
+</div>
 {% endfor %}
+
+<script>
+  (function() {
+    var select = document.getElementById('diaSelect');
+    if (!select) return;
+    var bloques = document.querySelectorAll('.dia-bloque');
+    function mostrar(dia) {
+      bloques.forEach(function(b) { b.style.display = (b.dataset.dia === dia) ? '' : 'none'; });
+    }
+    var diasHoy = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][new Date().getDay()];
+    var opciones = Array.prototype.map.call(select.options, function(o) { return o.value; });
+    var inicial = opciones.includes(diasHoy) ? diasHoy : opciones[0];
+    select.value = inicial;
+    mostrar(inicial);
+    select.addEventListener('change', function() { mostrar(this.value); });
+  })();
+</script>
 {% endblock %}
