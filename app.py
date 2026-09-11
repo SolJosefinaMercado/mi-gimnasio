@@ -125,6 +125,21 @@ notificaciones_t = Table(
     Column("fecha", Date, nullable=False),
 )
 
+EJERCICIOS_BASE = ["Sentadilla", "Press banca", "Peso muerto"]
+
+registros_ejercicio_t = Table(
+    "registros_ejercicio", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("cliente_id", Integer, ForeignKey("clientes.id", ondelete="CASCADE"), nullable=False),
+    Column("ejercicio", String, nullable=False),
+    Column("fecha", Date, nullable=False),
+    Column("series", Integer, nullable=False),
+    Column("repeticiones", Integer, nullable=False),
+    Column("porcentaje", Float),
+    Column("kilos", Float, nullable=False),
+    Column("rm_estimado", Float, nullable=False),
+)
+
 MINUTOS_LIMITE_RESERVA = 15
 
 
@@ -510,6 +525,75 @@ def marcar_notificaciones_leidas(db, cliente_id):
     db.commit()
 
 
+# ---------- Progreso de fuerza (1RM) ----------
+
+def calcular_1rm(kilos, repeticiones):
+    # Fórmula de Brzycki. Con 1 repetición el 1RM es directamente el peso levantado.
+    if repeticiones <= 1:
+        return kilos
+    return kilos / (1.0278 - (0.0278 * repeticiones))
+
+
+def listar_ejercicios_cliente(db, cliente_id):
+    rows = db.execute(
+        text("SELECT DISTINCT ejercicio FROM registros_ejercicio WHERE cliente_id = :cid"),
+        {"cid": cliente_id},
+    ).mappings().fetchall()
+    propios = [r["ejercicio"] for r in rows]
+    ordenados = list(EJERCICIOS_BASE)
+    for e in propios:
+        if e not in ordenados:
+            ordenados.append(e)
+    return ordenados
+
+
+def guardar_registro_ejercicio(db, cliente_id, ejercicio, series, repeticiones, porcentaje, kilos):
+    rm = calcular_1rm(kilos, repeticiones)
+    db.execute(
+        text(
+            "INSERT INTO registros_ejercicio (cliente_id, ejercicio, fecha, series, repeticiones, porcentaje, kilos, rm_estimado) "
+            "VALUES (:cid, :ej, :f, :s, :r, :p, :k, :rm)"
+        ),
+        {
+            "cid": cliente_id, "ej": ejercicio, "f": hoy(), "s": series, "r": repeticiones,
+            "p": porcentaje, "k": kilos, "rm": rm,
+        },
+    )
+    db.commit()
+    return rm
+
+
+def historial_1rm(db, cliente_id, por_ejercicio=6):
+    ejercicios = listar_ejercicios_cliente(db, cliente_id)
+    resultado = {}
+    for ej in ejercicios:
+        rows = db.execute(
+            text(
+                "SELECT fecha, rm_estimado FROM registros_ejercicio "
+                "WHERE cliente_id = :cid AND ejercicio = :ej ORDER BY fecha DESC, id DESC LIMIT :n"
+            ),
+            {"cid": cliente_id, "ej": ej, "n": por_ejercicio},
+        ).mappings().fetchall()
+        if rows:
+            puntos = [{"fecha": _to_date(r["fecha"]), "rm": r["rm_estimado"]} for r in reversed(rows)]
+            resultado[ej] = puntos
+    return resultado
+
+
+def _fechas_unificadas(historial):
+    todas = sorted({p["fecha"] for puntos in historial.values() for p in puntos})
+    return [f.strftime("%d/%m") for f in todas], todas
+
+
+def series_grafico_1rm(historial):
+    labels, fechas = _fechas_unificadas(historial)
+    series = []
+    for ejercicio, puntos in historial.items():
+        por_fecha = {p["fecha"]: round(p["rm"], 1) for p in puntos}
+        series.append({"ejercicio": ejercicio, "datos": [por_fecha.get(f) for f in fechas]})
+    return labels, series
+
+
 def formatear_telefono_whatsapp(telefono):
     # Normaliza a formato E.164 para Argentina: 54 9 <código de área><número>.
     # Asume que el teléfono está cargado sin 0 inicial y sin "15" (formato moderno,
@@ -707,6 +791,8 @@ def mi_cuenta():
     cliente = None
     inscripciones = []
     notificaciones = []
+    ejercicios = list(EJERCICIOS_BASE)
+    grafico_labels, grafico_series = [], []
     buscado = bool(dni)
     if dni:
         cliente = obtener_cliente_por_dni(db, dni)
@@ -716,6 +802,9 @@ def mi_cuenta():
             notificaciones = listar_notificaciones_no_leidas(db, cliente.id)
             if notificaciones:
                 marcar_notificaciones_leidas(db, cliente.id)
+            ejercicios = listar_ejercicios_cliente(db, cliente.id)
+            historial = historial_1rm(db, cliente.id)
+            grafico_labels, grafico_series = series_grafico_1rm(historial)
     config = obtener_config(db)
     mensaje = (
         f"Hola! Soy {cliente.nombre} (DNI {cliente.dni}), te envío el comprobante de mi pago."
@@ -725,7 +814,37 @@ def mi_cuenta():
     return render_template(
         "mi_cuenta.html", dni=dni, cliente=cliente, inscripciones=inscripciones, buscado=buscado,
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link, notificaciones=notificaciones,
+        ejercicios=ejercicios, grafico_labels=grafico_labels, grafico_series=grafico_series,
     )
+
+
+@app.route("/mi-cuenta/registro", methods=["POST"])
+def mi_cuenta_registro():
+    db = get_db()
+    dni = request.form.get("dni", "").strip()
+    cliente = obtener_cliente_por_dni(db, dni)
+    if not cliente:
+        flash("No pudimos identificar tu cuenta para guardar el registro.", "error")
+        return redirect(url_for("mi_cuenta"))
+
+    ejercicio = (request.form.get("ejercicio_otro") or request.form.get("ejercicio") or "").strip()
+    try:
+        series = int(request.form["series"])
+        repeticiones = int(request.form["repeticiones"])
+        kilos = float(request.form["kilos"])
+        porcentaje_raw = request.form.get("porcentaje", "").strip()
+        porcentaje = float(porcentaje_raw) if porcentaje_raw else None
+    except (KeyError, ValueError):
+        flash("Revisá los datos del registro: series, repeticiones y kilos tienen que ser números.", "error")
+        return redirect(url_for("mi_cuenta", dni=dni))
+
+    if not ejercicio or series <= 0 or repeticiones <= 0 or kilos <= 0:
+        flash("Completá ejercicio, series, repeticiones y kilos para guardar el registro.", "error")
+        return redirect(url_for("mi_cuenta", dni=dni))
+
+    guardar_registro_ejercicio(db, cliente.id, ejercicio, series, repeticiones, porcentaje, kilos)
+    flash(f"Registro de {ejercicio} guardado.", "success")
+    return redirect(url_for("mi_cuenta", dni=dni))
 
 
 @app.route("/mi-cuenta/cancelar/<int:inscripcion_id>", methods=["POST"])

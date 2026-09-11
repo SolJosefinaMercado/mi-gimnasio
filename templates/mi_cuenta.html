@@ -71,5 +71,99 @@
 {% else %}
 <p class="text-ink-soft">No tenés turnos reservados.</p>
 {% endif %}
+
+<h5 class="section-title">Progreso de fuerza</h5>
+<div class="card mb-3">
+  <div class="card-body">
+    <p class="text-ink-soft small mb-3">Registrar una carga</p>
+    <form method="POST" action="{{ url_for('mi_cuenta_registro') }}" id="formRegistro">
+      <input type="hidden" name="dni" value="{{ cliente.dni }}">
+      <div class="mb-2">
+        <select name="ejercicio" id="selectEjercicio" class="form-select form-select-sm">
+          {% for ej in ejercicios %}
+          <option value="{{ ej }}">{{ ej }}</option>
+          {% endfor %}
+          <option value="__otro__">Otro ejercicio…</option>
+        </select>
+        <input type="text" name="ejercicio_otro" id="inputOtroEjercicio" class="form-control form-control-sm mt-2" placeholder="Nombre del ejercicio" style="display:none;">
+      </div>
+      <div class="row g-2 mb-2">
+        <div class="col-6 col-md-3">
+          <input type="number" name="series" min="1" class="form-control form-control-sm" placeholder="Series" required>
+        </div>
+        <div class="col-6 col-md-3">
+          <input type="number" name="repeticiones" min="1" class="form-control form-control-sm" placeholder="Reps" required>
+        </div>
+        <div class="col-6 col-md-3">
+          <input type="number" name="porcentaje" min="1" max="100" step="0.1" class="form-control form-control-sm" placeholder="% usado">
+        </div>
+        <div class="col-6 col-md-3">
+          <input type="number" name="kilos" min="0.5" step="0.5" class="form-control form-control-sm" placeholder="Kilos" required>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-success btn-sm">Guardar registro</button>
+    </form>
+  </div>
+</div>
+
+{% if grafico_series %}
+<div class="card mb-3">
+  <div class="card-body">
+    <p class="text-ink-soft small mb-1">1RM estimado por ejercicio</p>
+    <p class="text-ink-soft mb-3" style="font-size:0.7rem;">Fórmula de Brzycki, últimas cargas registradas</p>
+    <div id="leyendaGrafico" class="d-flex flex-wrap gap-3 mb-2" style="font-size:0.7rem;"></div>
+    <div style="position:relative;height:220px;">
+      <canvas id="chart1rm" role="img" aria-label="Evolución del 1RM estimado por ejercicio a lo largo del tiempo">Progreso de 1RM por ejercicio.</canvas>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  (function() {
+    var select = document.getElementById('selectEjercicio');
+    var otro = document.getElementById('inputOtroEjercicio');
+    select.addEventListener('change', function() {
+      otro.style.display = this.value === '__otro__' ? '' : 'none';
+      otro.required = this.value === '__otro__';
+    });
+  })();
+</script>
+
+{% if grafico_series %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  (function() {
+    var colores = ['#C6FF33', '#AFA9EC', '#f5f5f7', '#f0997b', '#5DCAA5', '#ED93B1'];
+    var datasets = [];
+    var leyenda = document.getElementById('leyendaGrafico');
+    var series = {{ grafico_series | tojson }};
+    series.forEach(function(s, i) {
+      var color = colores[i % colores.length];
+      datasets.push({
+        label: s.ejercicio, data: s.datos, borderColor: color,
+        backgroundColor: color + '20', borderWidth: 2, spanGaps: true,
+        pointRadius: 3, pointBackgroundColor: color, tension: 0.3
+      });
+      var item = document.createElement('span');
+      item.style.cssText = 'display:flex;align-items:center;gap:5px;color:#e8e8ea;';
+      item.innerHTML = '<span style="width:9px;height:9px;border-radius:2px;background:' + color + ';display:inline-block;"></span>' + s.ejercicio;
+      leyenda.appendChild(item);
+    });
+    new Chart(document.getElementById('chart1rm'), {
+      type: 'line',
+      data: { labels: {{ grafico_labels | tojson }}, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#8a8a90', font: { size: 10 } }, grid: { display: false } },
+          y: { ticks: { color: '#8a8a90', font: { size: 10 }, callback: (v) => v + ' kg' }, grid: { color: '#232326' } }
+        }
+      }
+    });
+  })();
+</script>
+{% endif %}
 {% endif %}
 {% endblock %}
