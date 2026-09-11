@@ -633,9 +633,9 @@ def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
                     "components": [{
                         "type": "body",
                         "parameters": [
-                            {"type": "text", "text": nombre},
-                            {"type": "text", "text": f"{monto:,.2f}"},
-                            {"type": "text", "text": fecha_vencimiento.strftime("%d/%m/%Y")},
+                            {"type": "text", "parameter_name": "nombre", "text": nombre},
+                            {"type": "text", "parameter_name": "monto", "text": f"{monto:,.2f}"},
+                            {"type": "text", "parameter_name": "vencimiento", "text": fecha_vencimiento.strftime("%d/%m/%Y")},
                         ],
                     }],
                 },
