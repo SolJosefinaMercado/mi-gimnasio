@@ -204,12 +204,16 @@ a { color: var(--violet-text); }
 
 /* ---------- Formularios ---------- */
 .form-control, .form-select {
-  background-color: var(--surface);
+  background-color: var(--ink);
   border: 1px solid var(--border-strong);
   color: var(--text);
 }
+.form-control::placeholder, .form-select:invalid {
+  color: #a3a3aa;
+  opacity: 1;
+}
 .form-control:focus, .form-select:focus {
-  background-color: var(--surface);
+  background-color: var(--ink);
   border-color: var(--lime);
   color: var(--text);
   box-shadow: 0 0 0 0.2rem rgba(198, 255, 51, 0.15);
