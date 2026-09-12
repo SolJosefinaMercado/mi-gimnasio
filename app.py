@@ -217,7 +217,7 @@ class Cliente:
         self.telefono = row["telefono"]
         self.email = row["email"]
         self.activo = bool(row["activo"])
-        self.objetivo_semanal = row["objetivo_semanal"]
+        self.objetivo_semanal = row["objetivo_semanal"] if "objetivo_semanal" in row.keys() else None
         self.proximo_vencimiento = proximo_vencimiento
         self.cupos_totales = None
         self.cupos_usados = None
@@ -421,7 +421,7 @@ def listar_pagos(db, limit=20):
     rows = db.execute(
         text(
             "SELECT p.*, c.id AS c_id, c.nombre AS c_nombre, c.dni AS c_dni, c.telefono AS c_telefono, "
-            "c.email AS c_email, c.activo AS c_activo "
+            "c.email AS c_email, c.activo AS c_activo, c.objetivo_semanal AS c_objetivo_semanal "
             "FROM pagos p JOIN clientes c ON c.id = p.cliente_id ORDER BY p.fecha_pago DESC, p.id DESC LIMIT :limit"
         ),
         {"limit": limit},
@@ -431,6 +431,7 @@ def listar_pagos(db, limit=20):
         cliente = Cliente({
             "id": row["c_id"], "nombre": row["c_nombre"], "dni": row["c_dni"],
             "telefono": row["c_telefono"], "email": row["c_email"], "activo": row["c_activo"],
+            "objetivo_semanal": row["c_objetivo_semanal"],
         })
         result.append(Pago(row, cliente))
     return result
