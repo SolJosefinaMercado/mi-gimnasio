@@ -26,10 +26,15 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 app.permanent_session_lifetime = timedelta(days=180)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
-WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")
-WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID")
-WHATSAPP_TEMPLATE_NAME = os.environ.get("WHATSAPP_TEMPLATE_NAME", "aviso_pago")
-WHATSAPP_TEMPLATE_LANG = os.environ.get("WHATSAPP_TEMPLATE_LANG", "es_AR")
+def _env_limpio(nombre, default=None):
+    valor = os.environ.get(nombre, default)
+    return valor.strip() if valor else valor
+
+
+WHATSAPP_TOKEN = _env_limpio("WHATSAPP_TOKEN")
+WHATSAPP_PHONE_ID = _env_limpio("WHATSAPP_PHONE_ID")
+WHATSAPP_TEMPLATE_NAME = _env_limpio("WHATSAPP_TEMPLATE_NAME", "aviso_pago")
+WHATSAPP_TEMPLATE_LANG = _env_limpio("WHATSAPP_TEMPLATE_LANG", "es_AR")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
