@@ -660,22 +660,26 @@ def series_grafico_1rm(historial):
 
 
 def formatear_telefono_whatsapp(telefono):
-    # Normaliza a formato E.164 para Argentina: 54 9 <código de área><número>.
-    # Asume que el teléfono está cargado sin 0 inicial y sin "15" (formato moderno,
-    # el mismo que ya pide WhatsApp). Si el "15" está en el medio del número no se
-    # puede sacar de forma confiable sin saber el largo del código de área.
+    # Normaliza a formato E.164 para Argentina: 54 <código de área><número>, SIN el 9.
+    # A diferencia de cómo se marcan llamadas, la API de WhatsApp para números
+    # argentinos no lleva el 9 después del 54 (confirmado con el propio ejemplo
+    # de código que genera Meta al probar el número de destino).
+    # Asume que el teléfono está cargado sin 0 inicial y sin "15" (formato moderno).
+    # Si el "15" está en el medio del número no se puede sacar de forma confiable
+    # sin saber el largo del código de área.
     if not telefono:
         return None
     digitos = "".join(ch for ch in telefono if ch.isdigit())
     if not digitos:
         return None
     if digitos.startswith("549"):
-        return digitos
+        # Alguien lo cargó con el 9 de más (formato de llamada); lo sacamos.
+        return "54" + digitos[3:]
     if digitos.startswith("54"):
-        return "549" + digitos[2:]
+        return digitos
     if digitos.startswith("0"):
         digitos = digitos[1:]
-    return "549" + digitos
+    return "54" + digitos
 
 
 def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
