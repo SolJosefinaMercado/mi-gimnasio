@@ -1,0 +1,239 @@
+:root {
+  --lime: #C6FF33;
+  --lime-dark: #a8db1f;
+  --violet: #7D39EB;
+  --violet-soft: #2a1c4d;
+  --violet-text: #AFA9EC;
+  --ink: #0c0c0e;
+  --surface: #18181b;
+  --surface-2: #202024;
+  --border: #232326;
+  --border-strong: #2c2c30;
+  --text: #f5f5f7;
+  --text-soft: #8a8a90;
+  --ok: #C6FF33;
+  --ok-ink: #173404;
+  --warn: var(--violet-text);
+  --warn-bg: var(--violet-soft);
+  --danger: #ff5470;
+  --danger-bg: #3a1620;
+  --muted-bg: #232326;
+  --radius: 14px;
+}
+
+body {
+  background-color: var(--ink);
+  color: var(--text);
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+a { color: var(--violet-text); }
+
+/* ---------- Navbar ---------- */
+.navbar {
+  background-color: var(--ink) !important;
+  border-bottom: 1px solid var(--border);
+}
+
+.btn-brand-turnos {
+  background-color: var(--lime);
+  color: var(--ok-ink);
+  border-color: var(--lime);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.btn-brand-turnos:hover {
+  background-color: var(--lime-dark);
+  color: var(--ok-ink);
+  border-color: var(--lime-dark);
+}
+
+.btn-outline-light {
+  border-color: var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
+}
+.btn-outline-light:hover {
+  background-color: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.btn-outline-light.activo {
+  background-color: var(--violet);
+  border-color: var(--violet);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* ---------- Cards ---------- */
+.card {
+  margin-bottom: 1rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.card-title, h1, h2, h3, h4, h5, h6 {
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.horario-card .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.horario-card .horario-hora {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff;
+}
+.horario-card .horario-etiqueta {
+  color: var(--text-soft);
+  font-weight: 400;
+}
+
+/* ---------- Estados / badges ---------- */
+.badge-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.badge-disponible { background: var(--lime); color: var(--ok-ink); }
+.badge-cierra-pronto { background: var(--warn-bg); color: var(--warn); }
+.badge-sin-cupo { background: var(--muted-bg); color: var(--text-soft); }
+.badge-bloqueado, .badge-vencido { background: var(--danger-bg); color: var(--danger); }
+
+/* ---------- Notificaciones (avisos de pago cargado, etc.) ---------- */
+.notificacion-card {
+  border: 1px solid var(--lime);
+  background: rgba(198, 255, 51, 0.08);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  color: var(--text);
+}
+.notificacion-card .bi {
+  color: var(--lime);
+  font-size: 1.2rem;
+  margin-top: 0.1rem;
+}
+
+/* ---------- Precios y abonos (mi cuenta) ---------- */
+.precios-card .precio-linea { color: var(--text); }
+.precios-card .precio-monto { color: var(--lime); font-weight: 700; }
+.alias-mp {
+  background: var(--violet-soft);
+  border: 1px solid var(--violet);
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+}
+.alias-mp .alias-label { color: var(--violet-text); font-size: 0.75rem; }
+.alias-mp .alias-valor { color: #fff; font-weight: 700; font-size: 0.95rem; }
+
+/* ---------- Métricas compactas (dashboard admin / mi cuenta) ---------- */
+.metricas-fila {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+.metrica-mini {
+  flex: 1;
+  text-align: center;
+  padding: 0.7rem 0.3rem;
+}
+.metrica-mini .metrica-valor {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--lime);
+}
+.metrica-mini .metrica-valor.acento-violeta { color: var(--violet-text); }
+.metrica-mini .metrica-valor.acento-danger { color: var(--danger); }
+.metrica-mini .metrica-label {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+}
+
+/* ---------- Grilla de accesos rápidos (admin) ---------- */
+.accesos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.acceso-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.9rem 0.3rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+}
+.acceso-btn .bi { font-size: 1.3rem; color: var(--lime); }
+.acceso-btn:hover {
+  border-color: var(--lime);
+  color: var(--text);
+}
+
+/* ---------- Ganancias ---------- */
+.ganancias-total { font-size: 1.8rem; font-weight: 700; color: var(--lime); }
+.periodo-tabs .btn { font-size: 0.78rem; }
+.selector-mes { display: flex; align-items: center; justify-content: center; gap: 0.6rem; margin-bottom: 0.75rem; }
+.selector-mes .mes-label { font-size: 0.85rem; font-weight: 700; color: #fff; min-width: 140px; text-align: center; }
+.selector-mes .mes-nav { color: var(--text-soft); font-size: 1.1rem; text-decoration: none; padding: 0.2rem 0.4rem; }
+.selector-mes .mes-nav.disabled { color: #3a3a3e; pointer-events: none; }
+.selector-mes .mes-nav:hover { color: var(--lime); }
+
+/* ---------- Formularios ---------- */
+.form-control, .form-select {
+  background-color: var(--ink);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+.form-control::placeholder, .form-select:invalid {
+  color: #a3a3aa;
+  opacity: 1;
+}
+.form-control:focus, .form-select:focus {
+  background-color: var(--ink);
+  border-color: var(--lime);
+  color: var(--text);
+  box-shadow: 0 0 0 0.2rem rgba(198, 255, 51, 0.15);
+}
+.form-select.selector-dia {
+  border-color: var(--lime);
+  font-weight: 700;
+  color: #fff;
+}
+.btn-primary {
+  background-color: var(--violet);
+  border-color: var(--violet);
+  font-weight: 700;
+}
+.btn-primary:hover { background-color: #6a2bd1; border-color: #6a2bd1; }
+.btn-success { background-color: var(--lime); border-color: var(--lime); color: var(--ok-ink); font-weight: 700; }
+.btn-success:hover { background-color: var(--lime-dark); border-color: var(--lime-dark); color: var(--ok-ink); }
+.btn-outline-danger { color: var(--danger); border-color: var(--danger); }
+.list-group-item { background-color: var(--surface); border-color: var(--border); color: var(--text); }
+
+/* ---------- Utilidades ---------- */
+.text-ink-soft { color: var(--text-soft); }
+.section-title { font-weight: 700; margin-top: 1.75rem; margin-bottom: 0.9rem; color: #fff; }

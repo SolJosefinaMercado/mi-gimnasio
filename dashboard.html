@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Panel admin{% endblock %}
+{% block content %}
+<h2 class="mb-3">Panel de administración</h2>
+
+<div class="metricas-fila">
+  <div class="card metrica-mini">
+    <div class="metrica-valor">{{ total_clientes }}</div>
+    <div class="metrica-label">Clientes activos</div>
+  </div>
+  <div class="card metrica-mini">
+    <div class="metrica-valor acento-danger">{{ vencidos|length }}</div>
+    <div class="metrica-label">Abonos vencidos</div>
+  </div>
+  <div class="card metrica-mini">
+    <div class="metrica-valor acento-violeta">{{ turnos_hoy|length }}</div>
+    <div class="metrica-label">Turnos hoy ({{ hoy_nombre }})</div>
+  </div>
+</div>
+
+<div class="accesos-grid">
+  <a href="{{ url_for('admin_clientes') }}" class="acceso-btn"><i class="bi bi-people"></i> Clientes</a>
+  <a href="{{ url_for('admin_pagos') }}" class="acceso-btn"><i class="bi bi-cash-coin"></i> Pagos</a>
+  <a href="{{ url_for('admin_horarios') }}" class="acceso-btn"><i class="bi bi-calendar3"></i> Horarios</a>
+  <a href="{{ url_for('admin_asistencia') }}" class="acceso-btn"><i class="bi bi-clipboard-check"></i> Asistencia</a>
+  <a href="{{ url_for('admin_entrenamiento') }}" class="acceso-btn"><i class="bi bi-clipboard2-pulse"></i> Entrenamiento</a>
+  <a href="{{ url_for('admin_config') }}" class="acceso-btn"><i class="bi bi-gear"></i> Configuración</a>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+      <div>
+        <h6 class="text-ink-soft mb-1">
+          Ganancias
+          {% if ganancias.periodo == 'semana' %}· {{ ganancias.mes_actual.label }}
+          {% elif ganancias.periodo == 'mes' %}(últimos 12 meses)
+          {% else %}(últimos 5 años){% endif %}
+        </h6>
+        <div class="ganancias-total">${{ '{:,.2f}'.format(ganancias.total_actual) }}</div>
+      </div>
+      <div class="btn-group periodo-tabs" role="group">
+        <a href="{{ url_for('admin_dashboard', periodo='semana') }}" class="btn btn-sm {{ 'btn-primary' if ganancias.periodo == 'semana' else 'btn-outline-primary' }}">Semana</a>
+        <a href="{{ url_for('admin_dashboard', periodo='mes') }}" class="btn btn-sm {{ 'btn-primary' if ganancias.periodo == 'mes' else 'btn-outline-primary' }}">Mes</a>
+        <a href="{{ url_for('admin_dashboard', periodo='anio') }}" class="btn btn-sm {{ 'btn-primary' if ganancias.periodo == 'anio' else 'btn-outline-primary' }}">Año</a>
+      </div>
+    </div>
+
+    {% if ganancias.periodo == 'semana' %}
+    <div class="selector-mes">
+      {% if ganancias.mes_prev %}
+        <a class="mes-nav" href="{{ url_for('admin_dashboard', periodo='semana', anio=ganancias.mes_prev.anio, mes=ganancias.mes_prev.mes) }}"><i class="bi bi-chevron-left"></i></a>
+      {% else %}
+        <span class="mes-nav disabled"><i class="bi bi-chevron-left"></i></span>
+      {% endif %}
+      <span class="mes-label">{{ ganancias.mes_actual.label }}</span>
+      {% if ganancias.mes_next %}
+        <a class="mes-nav" href="{{ url_for('admin_dashboard', periodo='semana', anio=ganancias.mes_next.anio, mes=ganancias.mes_next.mes) }}"><i class="bi bi-chevron-right"></i></a>
+      {% else %}
+        <span class="mes-nav disabled"><i class="bi bi-chevron-right"></i></span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <canvas id="graficoGanancias" height="110"></canvas>
+  </div>
+</div>
+
+{% if vencidos %}
+<h5 class="section-title">Clientes con abono vencido</h5>
+<ul class="list-group mb-4">
+  {% for c in vencidos %}
+  <li class="list-group-item">{{ c.nombre }} — venció el {{ c.proximo_vencimiento.strftime('%d/%m/%Y') }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  const ctx = document.getElementById('graficoGanancias');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: {{ ganancias.buckets | map(attribute='label') | list | tojson }},
+      datasets: [{
+        label: 'Ingresos',
+        data: {{ ganancias.buckets | map(attribute='total') | list | tojson }},
+        backgroundColor: '#C6FF33',
+        borderColor: '#a8db1f',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8a8a90' }, grid: { color: '#232326' } },
+        y: { beginAtZero: true, ticks: { color: '#8a8a90', callback: (v) => '$' + v.toLocaleString('es-AR') }, grid: { color: '#232326' } }
+      }
+    }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Pagos{% endblock %}
+{% block content %}
+<h2 class="mb-4">Pagos</h2>
+
+<div class="row">
+  <div class="col-md-5">
+    <h5>Registrar nuevo pago</h5>
+    <form method="POST">
+      <div class="mb-3">
+        <label class="form-label">Cliente</label>
+        <select name="cliente_id" class="form-select" required>
+          <option value="" disabled selected>Elegí un cliente</option>
+          {% for c in clientes %}
+            <option value="{{ c.id }}">{{ c.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Monto</label>
+        <input type="number" step="0.01" name="monto" class="form-control" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Fecha de pago</label>
+        <input type="date" name="fecha_pago" class="form-control" value="{{ today }}" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Días de validez del abono</label>
+        <input type="number" name="dias_validez" class="form-control" value="30" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Cupos incluidos (opcional)</label>
+        <input type="number" name="cupos_totales" class="form-control" placeholder="ej: 12">
+        <div class="form-text">Dejalo vacío si el abono no tiene límite de clases (solo se controla por vencimiento).</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Nota (opcional)</label>
+        <input type="text" name="nota" class="form-control">
+      </div>
+      <button type="submit" class="btn btn-primary">Registrar pago</button>
+    </form>
+  </div>
+
+  <div class="col-md-7">
+    <h5>Últimos pagos</h5>
+    <table class="table table-striped bg-white">
+      <thead><tr><th>Cliente</th><th>Fecha</th><th>Monto</th><th>Vence</th><th>Cupos</th></tr></thead>
+      <tbody>
+        {% for p in pagos %}
+        <tr>
+          <td>{{ p.cliente.nombre }}</td>
+          <td>{{ p.fecha_pago.strftime('%d/%m/%Y') }}</td>
+          <td>${{ '%.2f'|format(p.monto) }}</td>
+          <td>{{ p.fecha_vencimiento.strftime('%d/%m/%Y') }}</td>
+          <td>{{ p.cupos_totales if p.cupos_totales is not none else '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

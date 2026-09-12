@@ -4,7 +4,7 @@ from functools import wraps
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from flask import Flask, g, redirect, render_template, request, session, url_for, flash
+from flask import Flask, g, redirect, render_template, request, session, url_for, flash, send_from_directory
 import requests
 from sqlalchemy import (
     Boolean, Column, Date, Float, ForeignKey, Integer, MetaData, String,
@@ -679,6 +679,14 @@ def cliente_de_sesion(db):
 
 
 # ---------- Rutas públicas ----------
+
+@app.route("/sw.js")
+def service_worker():
+    respuesta = send_from_directory(app.static_folder, "sw.js")
+    respuesta.headers["Service-Worker-Allowed"] = "/"
+    respuesta.headers["Cache-Control"] = "no-cache"
+    return respuesta
+
 
 @app.route("/")
 def index():

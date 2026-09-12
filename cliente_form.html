@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Editar' if cliente else 'Nuevo' }} cliente{% endblock %}
+{% block content %}
+<h2 class="mb-4">{{ 'Editar' if cliente else 'Nuevo' }} cliente</h2>
+
+<form method="POST" class="col-md-6">
+  <div class="mb-3">
+    <label class="form-label">Nombre completo</label>
+    <input type="text" name="nombre" class="form-control" value="{{ cliente.nombre if cliente else '' }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">DNI</label>
+    <input type="text" name="dni" class="form-control" value="{{ cliente.dni if cliente else '' }}" required>
+    <div class="form-text">El cliente lo usa para consultar su vencimiento y reservas.</div>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Teléfono</label>
+    <input type="text" name="telefono" class="form-control" value="{{ cliente.telefono if cliente else '' }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Email</label>
+    <input type="email" name="email" class="form-control" value="{{ cliente.email if cliente else '' }}">
+  </div>
+  {% if cliente %}
+  <div class="form-check mb-3">
+    <input type="checkbox" name="activo" class="form-check-input" id="activo" {{ 'checked' if cliente.activo }}>
+    <label class="form-check-label" for="activo">Cliente activo</label>
+  </div>
+  {% endif %}
+  <button type="submit" class="btn btn-primary">Guardar</button>
+  <a href="{{ url_for('admin_clientes') }}" class="btn btn-outline-secondary">Cancelar</a>
+</form>
+{% endblock %}
