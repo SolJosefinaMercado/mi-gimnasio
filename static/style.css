@@ -234,6 +234,14 @@ a { color: var(--violet-text); }
 .btn-outline-danger { color: var(--danger); border-color: var(--danger); }
 .list-group-item { background-color: var(--surface); border-color: var(--border); color: var(--text); }
 
+.alert-pr {
+  background: linear-gradient(135deg, rgba(198,255,51,0.18), rgba(125,57,235,0.12));
+  border: 1px solid var(--lime);
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
+}
+
 /* ---------- Utilidades ---------- */
 .text-ink-soft { color: var(--text-soft); }
 .section-title { font-weight: 700; margin-top: 1.75rem; margin-bottom: 0.9rem; color: #fff; }

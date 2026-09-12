@@ -52,6 +52,7 @@ clientes_t = Table(
     Column("telefono", String),
     Column("email", String),
     Column("activo", Boolean, nullable=False),
+    Column("objetivo_semanal", Integer),
 )
 
 pagos_t = Table(
@@ -162,6 +163,7 @@ def init_db():
     horarios_cols = {c["name"] for c in inspector.get_columns("horarios")}
     inscripciones_cols = {c["name"] for c in inspector.get_columns("inscripciones")}
     pagos_cols = {c["name"] for c in inspector.get_columns("pagos")}
+    clientes_cols = {c["name"] for c in inspector.get_columns("clientes")}
     with engine.begin() as conn:
         # Migraciones livianas para bases ya desplegadas antes de estas columnas existir.
         if "activo" not in horarios_cols:
@@ -170,6 +172,8 @@ def init_db():
             conn.execute(text("ALTER TABLE inscripciones ADD COLUMN semana DATE"))
         if "cupos_totales" not in pagos_cols:
             conn.execute(text("ALTER TABLE pagos ADD COLUMN cupos_totales INTEGER"))
+        if "objetivo_semanal" not in clientes_cols:
+            conn.execute(text("ALTER TABLE clientes ADD COLUMN objetivo_semanal INTEGER"))
         existe = conn.execute(text("SELECT 1 FROM configuracion WHERE id = 1")).fetchone()
         if not existe:
             conn.execute(text("INSERT INTO configuracion (id, alias_mp, whatsapp_numero) VALUES (1, '', '')"))
@@ -213,6 +217,7 @@ class Cliente:
         self.telefono = row["telefono"]
         self.email = row["email"]
         self.activo = bool(row["activo"])
+        self.objetivo_semanal = row["objetivo_semanal"]
         self.proximo_vencimiento = proximo_vencimiento
         self.cupos_totales = None
         self.cupos_usados = None
@@ -527,6 +532,55 @@ def marcar_notificaciones_leidas(db, cliente_id):
 
 # ---------- Progreso de fuerza (1RM) ----------
 
+# ---------- Racha de asistencia ----------
+
+def guardar_objetivo_semanal(db, cliente_id, objetivo):
+    db.execute(
+        text("UPDATE clientes SET objetivo_semanal = :obj WHERE id = :cid"),
+        {"obj": objetivo, "cid": cliente_id},
+    )
+    db.commit()
+
+
+def fechas_asistencia_cliente(db, cliente_id):
+    rows = db.execute(
+        text(
+            "SELECT a.fecha FROM asistencias a "
+            "JOIN inscripciones i ON i.id = a.inscripcion_id "
+            "WHERE i.cliente_id = :cid"
+        ),
+        {"cid": cliente_id},
+    ).mappings().fetchall()
+    return [_to_date(r["fecha"]) for r in rows]
+
+
+def calcular_racha(fechas, objetivo):
+    if not objetivo or objetivo <= 0:
+        return None
+
+    def inicio_semana_lv(f):
+        return f - timedelta(days=f.weekday())
+
+    conteo_por_semana = {}
+    for f in fechas:
+        semana = inicio_semana_lv(f)
+        conteo_por_semana[semana] = conteo_por_semana.get(semana, 0) + 1
+
+    hoy_d = hoy()
+    semana_actual = inicio_semana_lv(hoy_d)
+    semana_revisar = semana_actual - timedelta(days=7)
+    racha = 0
+    while conteo_por_semana.get(semana_revisar, 0) >= objetivo:
+        racha += 1
+        semana_revisar -= timedelta(days=7)
+
+    return {
+        "racha": racha,
+        "objetivo": objetivo,
+        "semana_actual_count": conteo_por_semana.get(semana_actual, 0),
+    }
+
+
 def calcular_1rm(kilos, repeticiones):
     # Fórmula de Brzycki. Con 1 repetición el 1RM es directamente el peso levantado.
     if repeticiones <= 1:
@@ -549,6 +603,11 @@ def listar_ejercicios_cliente(db, cliente_id):
 
 def guardar_registro_ejercicio(db, cliente_id, ejercicio, series, repeticiones, porcentaje, kilos):
     rm = calcular_1rm(kilos, repeticiones)
+    maximo_previo = db.execute(
+        text("SELECT MAX(rm_estimado) AS m FROM registros_ejercicio WHERE cliente_id = :cid AND ejercicio = :ej"),
+        {"cid": cliente_id, "ej": ejercicio},
+    ).mappings().fetchone()["m"]
+    es_pr = maximo_previo is None or rm > maximo_previo
     db.execute(
         text(
             "INSERT INTO registros_ejercicio (cliente_id, ejercicio, fecha, series, repeticiones, porcentaje, kilos, rm_estimado) "
@@ -560,7 +619,7 @@ def guardar_registro_ejercicio(db, cliente_id, ejercicio, series, repeticiones, 
         },
     )
     db.commit()
-    return rm
+    return rm, es_pr
 
 
 def historial_1rm(db, cliente_id, por_ejercicio=6):
@@ -801,6 +860,7 @@ def mi_cuenta():
     notificaciones = []
     ejercicios = list(EJERCICIOS_BASE)
     grafico_labels, grafico_series = [], []
+    racha = None
     buscado = bool(dni)
     if dni:
         cliente = obtener_cliente_por_dni(db, dni)
@@ -813,6 +873,7 @@ def mi_cuenta():
             ejercicios = listar_ejercicios_cliente(db, cliente.id)
             historial = historial_1rm(db, cliente.id)
             grafico_labels, grafico_series = series_grafico_1rm(historial)
+            racha = calcular_racha(fechas_asistencia_cliente(db, cliente.id), cliente.objetivo_semanal)
     config = obtener_config(db)
     mensaje = (
         f"Hola! Soy {cliente.nombre} (DNI {cliente.dni}), te envío el comprobante de mi pago."
@@ -821,9 +882,31 @@ def mi_cuenta():
     whatsapp_link = construir_whatsapp_link(config.whatsapp_numero, mensaje)
     return render_template(
         "mi_cuenta.html", dni=dni, cliente=cliente, inscripciones=inscripciones, buscado=buscado,
+        racha=racha,
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link, notificaciones=notificaciones,
         ejercicios=ejercicios, grafico_labels=grafico_labels, grafico_series=grafico_series,
     )
+
+
+@app.route("/mi-cuenta/objetivo", methods=["POST"])
+def mi_cuenta_objetivo():
+    db = get_db()
+    dni = request.form.get("dni", "").strip()
+    cliente = obtener_cliente_por_dni(db, dni)
+    if not cliente:
+        flash("No pudimos identificar tu cuenta para guardar el objetivo.", "error")
+        return redirect(url_for("mi_cuenta"))
+    try:
+        objetivo = int(request.form["objetivo_semanal"])
+    except (KeyError, ValueError):
+        flash("El objetivo semanal tiene que ser un número.", "error")
+        return redirect(url_for("mi_cuenta", dni=dni))
+    if objetivo <= 0 or objetivo > 5:
+        flash("El objetivo semanal tiene que ser entre 1 y 5 (los días hábiles del gimnasio).", "error")
+        return redirect(url_for("mi_cuenta", dni=dni))
+    guardar_objetivo_semanal(db, cliente.id, objetivo)
+    flash(f"Objetivo actualizado: {objetivo} veces por semana.", "success")
+    return redirect(url_for("mi_cuenta", dni=dni))
 
 
 @app.route("/mi-cuenta/registro", methods=["POST"])
@@ -850,8 +933,11 @@ def mi_cuenta_registro():
         flash("Completá ejercicio, series, repeticiones y kilos para guardar el registro.", "error")
         return redirect(url_for("mi_cuenta", dni=dni))
 
-    guardar_registro_ejercicio(db, cliente.id, ejercicio, series, repeticiones, porcentaje, kilos)
-    flash(f"Registro de {ejercicio} guardado.", "success")
+    rm, es_pr = guardar_registro_ejercicio(db, cliente.id, ejercicio, series, repeticiones, porcentaje, kilos)
+    if es_pr:
+        flash(f"🏆 ¡Nuevo PR en {ejercicio}! 1RM estimado: {rm:.1f} kg.", "pr")
+    else:
+        flash(f"Registro de {ejercicio} guardado.", "success")
     return redirect(url_for("mi_cuenta", dni=dni))
 
 

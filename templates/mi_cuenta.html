@@ -54,6 +54,35 @@
 </div>
 {% endif %}
 
+<div class="card mb-3">
+  <div class="card-body">
+    {% if racha %}
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+          <p class="text-ink-soft small mb-1">Racha de asistencia</p>
+          <p class="mb-0" style="font-size:1.6rem;font-weight:700;">🔥 {{ racha.racha }} <span style="font-size:0.9rem;color:var(--text-soft);font-weight:500;">{{ 'semana' if racha.racha == 1 else 'semanas' }} cumpliendo tu objetivo</span></p>
+          <p class="text-ink-soft small mb-0">Esta semana (lun-vie): {{ racha.semana_actual_count }}/{{ racha.objetivo }}</p>
+        </div>
+      </div>
+      <details class="mt-2">
+        <summary class="text-ink-soft small" style="cursor:pointer;">Cambiar objetivo</summary>
+        <form method="POST" action="{{ url_for('mi_cuenta_objetivo') }}" class="d-flex gap-2 mt-2">
+          <input type="hidden" name="dni" value="{{ cliente.dni }}">
+          <input type="number" name="objetivo_semanal" min="1" max="5" value="{{ racha.objetivo }}" class="form-control form-control-sm" style="max-width:100px;">
+          <button type="submit" class="btn btn-sm btn-primary">Guardar</button>
+        </form>
+      </details>
+    {% else %}
+      <p class="text-ink-soft small mb-2">Fijá cuántas veces por semana querés venir y armamos tu racha de asistencia.</p>
+      <form method="POST" action="{{ url_for('mi_cuenta_objetivo') }}" class="d-flex gap-2">
+        <input type="hidden" name="dni" value="{{ cliente.dni }}">
+        <input type="number" name="objetivo_semanal" min="1" max="5" placeholder="Ej: 3" class="form-control form-control-sm" style="max-width:100px;" required>
+        <button type="submit" class="btn btn-sm btn-primary">Fijar objetivo</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
 <h5 class="section-title">Tus turnos reservados</h5>
 {% if inscripciones %}
 <ul class="list-group">
