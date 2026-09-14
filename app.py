@@ -43,6 +43,7 @@ WHATSAPP_APP_SECRET = _env_limpio("WHATSAPP_APP_SECRET")
 WHATSAPP_ADMIN_TELEFONO = _env_limpio("WHATSAPP_ADMIN_TELEFONO")
 WHATSAPP_ADMIN_TEMPLATE_NAME = _env_limpio("WHATSAPP_ADMIN_TEMPLATE_NAME", "notificacion_bot")
 PRECIO_CLASE_PRUEBA = float(_env_limpio("PRECIO_CLASE_PRUEBA", "10000") or 10000)
+WHATSAPP_TEMPLATE_GENERAL_NAME = _env_limpio("WHATSAPP_TEMPLATE_GENERAL_NAME", "aviso_general")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
@@ -799,6 +800,38 @@ def enviar_whatsapp_admin(mensaje):
         return False, str(exc)
 
 
+def enviar_whatsapp_general(telefono, mensaje):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
+        return False, "WhatsApp no está configurado."
+    numero = formatear_telefono_whatsapp(telefono)
+    if not numero:
+        return False, "Sin teléfono cargado."
+    try:
+        resp = requests.post(
+            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": numero,
+                "type": "template",
+                "template": {
+                    "name": WHATSAPP_TEMPLATE_GENERAL_NAME,
+                    "language": {"code": WHATSAPP_TEMPLATE_LANG},
+                    "components": [{
+                        "type": "body",
+                        "parameters": [{"type": "text", "parameter_name": "mensaje", "text": mensaje}],
+                    }],
+                },
+            },
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            return False, f"{resp.status_code}: {resp.text[:150]}"
+        return True, None
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
 # ---------- Bot conversacional de WhatsApp (clase de prueba) ----------
 
 MENU_PRINCIPAL = (
@@ -1408,6 +1441,41 @@ def admin_dashboard():
         turnos_hoy=turnos_hoy,
         ganancias=ganancias,
     )
+
+
+# ---------- Admin: mensaje masivo ----------
+
+@app.route("/admin/mensajes", methods=["GET", "POST"])
+@admin_required
+def admin_mensajes():
+    db = get_db()
+    clientes = [c for c in listar_clientes(db, solo_activos=True) if c.telefono]
+    sin_telefono = len(listar_clientes(db, solo_activos=True)) - len(clientes)
+
+    if request.method == "POST":
+        mensaje = request.form.get("mensaje", "").strip()
+        if not mensaje:
+            flash("Escribí el mensaje antes de enviar.", "error")
+            return redirect(url_for("admin_mensajes"))
+        if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
+            flash("WhatsApp no está configurado todavía.", "error")
+            return redirect(url_for("admin_mensajes"))
+
+        enviados, fallidos = [], []
+        for c in clientes:
+            ok, error = enviar_whatsapp_general(c.telefono, mensaje)
+            if ok:
+                enviados.append(c.nombre)
+            else:
+                fallidos.append(f"{c.nombre} ({error})")
+
+        if enviados:
+            flash(f"Enviado a {len(enviados)} clientes.", "success")
+        if fallidos:
+            flash("No se pudo enviar a: " + "; ".join(fallidos[:8]) + (" y otros más." if len(fallidos) > 8 else "."), "warning")
+        return redirect(url_for("admin_mensajes"))
+
+    return render_template("admin/mensajes.html", total_clientes=len(clientes), sin_telefono=sin_telefono)
 
 
 # ---------- Admin: clientes ----------

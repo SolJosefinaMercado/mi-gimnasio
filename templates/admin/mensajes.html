@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Mensaje a clientes{% endblock %}
+{% block content %}
+<h2 class="mb-3">Mensaje a todos los clientes</h2>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <p class="text-ink-soft small mb-1">
+      Se va a mandar por WhatsApp a <strong>{{ total_clientes }}</strong> clientes activos con teléfono cargado.
+      {% if sin_telefono %}({{ sin_telefono }} clientes activos no tienen teléfono y no van a recibirlo.){% endif %}
+    </p>
+    <p class="text-ink-soft" style="font-size:0.75rem;">
+      Pensado para avisos operativos (cierres, cambios de horario, mantenimiento) — no para promociones.
+    </p>
+
+    <form method="POST">
+      <textarea name="mensaje" class="form-control mb-3" rows="4" maxlength="600"
+        placeholder="Ej: El sábado 20/9 el gimnasio permanece cerrado por refacciones. Volvemos el lunes con horario normal." required></textarea>
+      <button type="submit" class="btn btn-success" onclick="return confirm('¿Confirmás el envío a todos los clientes activos con teléfono?');">
+        <i class="bi bi-whatsapp"></i> Enviar a todos
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
