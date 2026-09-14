@@ -1,13 +1,16 @@
 import os
+import json
+import hmac
+import hashlib
 from datetime import date, datetime, timedelta
 from functools import wraps
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from flask import Flask, g, redirect, render_template, request, session, url_for, flash, send_from_directory
+from flask import Flask, g, redirect, render_template, request, session, url_for, flash, send_from_directory, jsonify
 import requests
 from sqlalchemy import (
-    Boolean, Column, Date, Float, ForeignKey, Integer, MetaData, String,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, MetaData, String,
     Table, Text, UniqueConstraint, create_engine, inspect, text,
 )
 from sqlalchemy.exc import IntegrityError
@@ -35,6 +38,11 @@ WHATSAPP_TOKEN = _env_limpio("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_ID = _env_limpio("WHATSAPP_PHONE_ID")
 WHATSAPP_TEMPLATE_NAME = _env_limpio("WHATSAPP_TEMPLATE_NAME", "aviso_pago")
 WHATSAPP_TEMPLATE_LANG = _env_limpio("WHATSAPP_TEMPLATE_LANG", "es_AR")
+WHATSAPP_VERIFY_TOKEN = _env_limpio("WHATSAPP_VERIFY_TOKEN", "valkiria-webhook")
+WHATSAPP_APP_SECRET = _env_limpio("WHATSAPP_APP_SECRET")
+WHATSAPP_ADMIN_TELEFONO = _env_limpio("WHATSAPP_ADMIN_TELEFONO")
+WHATSAPP_ADMIN_TEMPLATE_NAME = _env_limpio("WHATSAPP_ADMIN_TEMPLATE_NAME", "notificacion_bot")
+PRECIO_CLASE_PRUEBA = float(_env_limpio("PRECIO_CLASE_PRUEBA", "10000") or 10000)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
@@ -58,6 +66,7 @@ clientes_t = Table(
     Column("email", String),
     Column("activo", Boolean, nullable=False),
     Column("objetivo_semanal", Integer),
+    Column("prueba_usada", Boolean, nullable=False, server_default="false"),
 )
 
 pagos_t = Table(
@@ -146,6 +155,17 @@ registros_ejercicio_t = Table(
     Column("rm_estimado", Float, nullable=False),
 )
 
+conversaciones_whatsapp_t = Table(
+    "conversaciones_whatsapp", metadata,
+    Column("telefono", String, primary_key=True),
+    Column("estado", String, nullable=False),
+    Column("temp_nombre", String),
+    Column("temp_dni", String),
+    Column("temp_horarios", Text),  # JSON: lista de horario_id ofrecidos, en el orden mostrado
+    Column("intentos_fallidos", Integer, nullable=False, server_default="0"),
+    Column("actualizado_en", DateTime),
+)
+
 MINUTOS_LIMITE_RESERVA = 15
 
 
@@ -179,6 +199,8 @@ def init_db():
             conn.execute(text("ALTER TABLE pagos ADD COLUMN cupos_totales INTEGER"))
         if "objetivo_semanal" not in clientes_cols:
             conn.execute(text("ALTER TABLE clientes ADD COLUMN objetivo_semanal INTEGER"))
+        if "prueba_usada" not in clientes_cols:
+            conn.execute(text("ALTER TABLE clientes ADD COLUMN prueba_usada BOOLEAN NOT NULL DEFAULT FALSE"))
         existe = conn.execute(text("SELECT 1 FROM configuracion WHERE id = 1")).fetchone()
         if not existe:
             conn.execute(text("INSERT INTO configuracion (id, alias_mp, whatsapp_numero) VALUES (1, '', '')"))
@@ -223,6 +245,7 @@ class Cliente:
         self.email = row["email"]
         self.activo = bool(row["activo"])
         self.objetivo_semanal = row["objetivo_semanal"] if "objetivo_semanal" in row.keys() else None
+        self.prueba_usada = bool(row["prueba_usada"]) if "prueba_usada" in row.keys() else False
         self.proximo_vencimiento = proximo_vencimiento
         self.cupos_totales = None
         self.cupos_usados = None
@@ -716,6 +739,285 @@ def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
         return True, None
     except requests.RequestException as exc:
         return False, str(exc)
+
+
+def enviar_whatsapp_texto(telefono, texto):
+    # Mensaje de texto libre (sin plantilla). Solo funciona dentro de la ventana de
+    # 24hs desde el último mensaje que la persona nos mandó a nosotros.
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
+        return False, "WhatsApp no está configurado."
+    numero = formatear_telefono_whatsapp(telefono)
+    if not numero:
+        return False, "Número de teléfono inválido."
+    try:
+        resp = requests.post(
+            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": numero,
+                "type": "text",
+                "text": {"body": texto},
+            },
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
+        return True, None
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
+def enviar_whatsapp_admin(mensaje):
+    # Aviso al celular personal del gimnasio (no al número de producción, que es solo API).
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID and WHATSAPP_ADMIN_TELEFONO):
+        return False, "Falta configurar WHATSAPP_ADMIN_TELEFONO."
+    numero = formatear_telefono_whatsapp(WHATSAPP_ADMIN_TELEFONO)
+    try:
+        resp = requests.post(
+            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": numero,
+                "type": "template",
+                "template": {
+                    "name": WHATSAPP_ADMIN_TEMPLATE_NAME,
+                    "language": {"code": WHATSAPP_TEMPLATE_LANG},
+                    "components": [{
+                        "type": "body",
+                        "parameters": [{"type": "text", "parameter_name": "mensaje", "text": mensaje}],
+                    }],
+                },
+            },
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
+        return True, None
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
+# ---------- Bot conversacional de WhatsApp (clase de prueba) ----------
+
+MENU_PRINCIPAL = (
+    "¡Hola! 👋 Bienvenido/a a Valkiria Gimnasio. ¿En qué te puedo ayudar?\n\n"
+    "1️⃣ Ver horarios y precios\n"
+    "2️⃣ Reservar mi clase de prueba (${:,.0f})\n"
+    "3️⃣ Hablar con nosotros"
+).format(PRECIO_CLASE_PRUEBA)
+
+
+def obtener_conversacion(db, telefono):
+    row = db.execute(
+        text("SELECT * FROM conversaciones_whatsapp WHERE telefono = :t"), {"t": telefono}
+    ).mappings().fetchone()
+    return dict(row) if row else None
+
+
+def guardar_conversacion(db, telefono, **campos):
+    existente = obtener_conversacion(db, telefono)
+    campos["actualizado_en"] = datetime.now(TZ_LOCAL)
+    if existente:
+        sets = ", ".join(f"{k} = :{k}" for k in campos)
+        db.execute(text(f"UPDATE conversaciones_whatsapp SET {sets} WHERE telefono = :telefono"),
+                   {**campos, "telefono": telefono})
+    else:
+        campos.setdefault("estado", "menu")
+        campos.setdefault("intentos_fallidos", 0)
+        columnas = ", ".join(["telefono"] + list(campos.keys()))
+        valores = ", ".join([":telefono"] + [f":{k}" for k in campos])
+        db.execute(text(f"INSERT INTO conversaciones_whatsapp ({columnas}) VALUES ({valores})"),
+                   {**campos, "telefono": telefono})
+    db.commit()
+
+
+def _horarios_disponibles_prueba(db):
+    horarios = listar_horarios(db, con_inscripciones=False)
+    disponibles = [h for h in horarios if h.cupo_disponible > 0 and not h.cerrado_por_tiempo]
+    return disponibles[:8]
+
+
+def _texto_horarios_y_precios(db):
+    config = obtener_config(db)
+    planes = listar_planes(db)
+    horarios = _horarios_disponibles_prueba(db)
+    lineas = ["📅 Horarios con cupo esta semana:"]
+    for h in horarios[:6]:
+        lineas.append(f"• {h.dia_semana} {h.hora_inicio} - {h.etiqueta or 'Clase'}")
+    if not horarios:
+        lineas.append("Por ahora no hay cupos libres, pero escribinos igual.")
+    lineas.append("")
+    lineas.append("💰 Precios:")
+    for p in planes:
+        lineas.append(f"• {p.nombre}: ${p.precio:,.0f}")
+    lineas.append(f"• Clase de prueba: ${PRECIO_CLASE_PRUEBA:,.0f}")
+    lineas.append("")
+    lineas.append("Escribí 2 para reservar tu clase de prueba, o 3 para hablar con nosotros.")
+    return "\n".join(lineas)
+
+
+def _pasar_a_humano(db, telefono, avisar_admin=True, motivo="Alguien pidió hablar con vos"):
+    guardar_conversacion(db, telefono, estado="humano", intentos_fallidos=0)
+    enviar_whatsapp_texto(telefono, "Dale, ya le aviso a alguien del gimnasio para que te escriba. ¡Gracias por tu paciencia!")
+    if avisar_admin:
+        enviar_whatsapp_admin(f"{motivo} (WhatsApp {telefono}). Respondele desde tu chat normal si tenés otro número, o coordiná por acá.")
+
+
+def procesar_mensaje_entrante(db, telefono, texto, es_imagen=False):
+    conv = obtener_conversacion(db, telefono)
+    estado = conv["estado"] if conv else "inicio"
+    texto_norm = (texto or "").strip()
+
+    if es_imagen and estado != "humano":
+        enviar_whatsapp_texto(telefono, "¡Recibimos tu comprobante! En breve lo confirmamos y activamos tu clase.")
+        enviar_whatsapp_admin(f"Llegó un comprobante de pago por WhatsApp del {telefono}. Revisalo y cargá el pago en el panel.")
+        return
+
+    if estado == "humano":
+        return  # el bot ya no responde en esta conversación
+
+    if estado in ("inicio", None):
+        enviar_whatsapp_texto(telefono, MENU_PRINCIPAL)
+        guardar_conversacion(db, telefono, estado="menu", intentos_fallidos=0)
+        return
+
+    if estado == "menu":
+        if texto_norm == "1":
+            enviar_whatsapp_texto(telefono, _texto_horarios_y_precios(db))
+            guardar_conversacion(db, telefono, intentos_fallidos=0)
+        elif texto_norm == "2":
+            cliente_existente = None
+            dni_o_tel = "".join(ch for ch in telefono if ch.isdigit())
+            row = db.execute(
+                text("SELECT * FROM clientes WHERE telefono = :t"), {"t": dni_o_tel[-10:]}
+            ).mappings().fetchone()
+            if row:
+                cliente_existente = Cliente(row)
+            if cliente_existente and cliente_existente.prueba_usada:
+                enviar_whatsapp_texto(
+                    telefono,
+                    "Veo que ya usaste tu clase de prueba antes 🙂. Si querés anotarte con un abono, "
+                    "escribí 3 para que te ayudemos, o entrá a la web para reservar si ya sos socio/a."
+                )
+                guardar_conversacion(db, telefono, intentos_fallidos=0)
+            else:
+                enviar_whatsapp_texto(telefono, "¡Bárbaro! Para reservar tu clase de prueba necesito algunos datos. ¿Cuál es tu nombre completo?")
+                guardar_conversacion(db, telefono, estado="prueba_nombre", intentos_fallidos=0)
+        elif texto_norm == "3":
+            _pasar_a_humano(db, telefono, motivo="Alguien pidió hablar por el menú principal")
+        else:
+            _reintento_o_humano(db, telefono, conv, MENU_PRINCIPAL)
+        return
+
+    if estado == "prueba_nombre":
+        if len(texto_norm) < 3:
+            _reintento_o_humano(db, telefono, conv, "Contame tu nombre completo, por favor 🙂")
+            return
+        enviar_whatsapp_texto(telefono, f"¡Gracias, {texto_norm}! Ahora pasame tu DNI (sin puntos).")
+        guardar_conversacion(db, telefono, estado="prueba_dni", temp_nombre=texto_norm, intentos_fallidos=0)
+        return
+
+    if estado == "prueba_dni":
+        dni = "".join(ch for ch in texto_norm if ch.isdigit())
+        if len(dni) < 6:
+            _reintento_o_humano(db, telefono, conv, "Ese DNI no me cierra. Pasámelo solo con números, sin puntos.")
+            return
+        horarios = _horarios_disponibles_prueba(db)
+        if not horarios:
+            enviar_whatsapp_texto(telefono, "Uy, por ahora no quedan cupos disponibles esta semana. Escribí 3 y te ayudamos a coordinar.")
+            _pasar_a_humano(db, telefono, motivo="Sin cupos para clase de prueba")
+            return
+        lineas = ["Estos son los horarios disponibles esta semana:"]
+        for i, h in enumerate(horarios, start=1):
+            lineas.append(f"{i}) {h.dia_semana} {h.hora_inicio} - {h.etiqueta or 'Clase'}")
+        lineas.append("\n¿Cuál te queda mejor? Respondé con el número.")
+        enviar_whatsapp_texto(telefono, "\n".join(lineas))
+        guardar_conversacion(
+            db, telefono, estado="prueba_horario", temp_dni=dni,
+            temp_horarios=json.dumps([h.id for h in horarios]), intentos_fallidos=0,
+        )
+        return
+
+    if estado == "prueba_horario":
+        try:
+            opcion = int(texto_norm)
+            ids_ofrecidos = json.loads(conv["temp_horarios"] or "[]")
+            horario_id = ids_ofrecidos[opcion - 1]
+        except (ValueError, IndexError):
+            _reintento_o_humano(db, telefono, conv, "Respondé con el número de la lista, por favor.")
+            return
+        ok, resultado = _confirmar_reserva_prueba(db, telefono, conv["temp_nombre"], conv["temp_dni"], horario_id)
+        if ok:
+            enviar_whatsapp_texto(telefono, resultado)
+            enviar_whatsapp_admin(f"Nueva reserva de clase de prueba: {conv['temp_nombre']} (DNI {conv['temp_dni']}, WhatsApp {telefono}).")
+            guardar_conversacion(db, telefono, estado="inicio", intentos_fallidos=0)
+        else:
+            enviar_whatsapp_texto(telefono, resultado)
+            guardar_conversacion(db, telefono, estado="menu", intentos_fallidos=0)
+        return
+
+    # Estado desconocido: reiniciar
+    enviar_whatsapp_texto(telefono, MENU_PRINCIPAL)
+    guardar_conversacion(db, telefono, estado="menu", intentos_fallidos=0)
+
+
+def _reintento_o_humano(db, telefono, conv, mensaje_reintento):
+    intentos = (conv["intentos_fallidos"] if conv else 0) + 1
+    if intentos >= 2:
+        _pasar_a_humano(db, telefono, motivo="El bot no entendió dos veces seguidas")
+    else:
+        enviar_whatsapp_texto(telefono, mensaje_reintento)
+        guardar_conversacion(db, telefono, intentos_fallidos=intentos)
+
+
+def _confirmar_reserva_prueba(db, telefono, nombre, dni, horario_id):
+    horario_row = db.execute(text("SELECT * FROM horarios WHERE id = :id"), {"id": horario_id}).mappings().fetchone()
+    if not horario_row:
+        return False, "Ese horario ya no está disponible. Escribí 2 para volver a elegir."
+    semana_actual = inicio_semana(hoy())
+    cupo = _cupo_disponible(db, horario_id, horario_row["cupo_maximo"], semana_actual)
+    fecha_clase = fecha_de_clase(semana_actual, horario_row["dia_semana"])
+    if cupo <= 0 or reserva_cerrada_por_tiempo(fecha_clase, horario_row["hora_inicio"]):
+        return False, "Justo se ocupó ese cupo. Escribí 2 para elegir otro horario."
+
+    dni_limpio = "".join(ch for ch in dni if ch.isdigit())
+    tel_limpio = "".join(ch for ch in telefono if ch.isdigit())[-10:]
+    cliente = obtener_cliente_por_dni(db, dni_limpio)
+    if cliente:
+        db.execute(
+            text("UPDATE clientes SET prueba_usada = TRUE, telefono = COALESCE(telefono, :tel) WHERE id = :id"),
+            {"tel": tel_limpio, "id": cliente.id},
+        )
+        cliente_id = cliente.id
+    else:
+        result = db.execute(
+            text(
+                "INSERT INTO clientes (nombre, dni, telefono, activo, prueba_usada) "
+                "VALUES (:nombre, :dni, :telefono, TRUE, TRUE) RETURNING id"
+            ),
+            {"nombre": nombre, "dni": dni_limpio, "telefono": tel_limpio},
+        )
+        cliente_id = result.scalar()
+    db.execute(
+        text(
+            "INSERT INTO inscripciones (cliente_id, horario_id, activa, semana) VALUES (:c, :h, TRUE, :s) "
+            "ON CONFLICT (cliente_id, horario_id) DO UPDATE SET activa = TRUE"
+        ),
+        {"c": cliente_id, "h": horario_id, "s": semana_actual},
+    )
+    db.commit()
+
+    config = obtener_config(db)
+    mensaje = (
+        f"¡Listo, {nombre}! Te reservamos el {horario_row['dia_semana']} a las {horario_row['hora_inicio']}.\n\n"
+        f"La clase de prueba cuesta ${PRECIO_CLASE_PRUEBA:,.0f}."
+    )
+    if config.alias_mp:
+        mensaje += f" Alias de Mercado Pago: {config.alias_mp}."
+    mensaje += " Cuando hagas la transferencia, mandanos el comprobante acá mismo y confirmamos tu lugar. ¡Te esperamos!"
+    return True, mensaje
 
 
 # ---------- Auth admin ----------
@@ -1347,6 +1649,48 @@ def admin_plan_eliminar(plan_id):
     db.execute(text("DELETE FROM planes WHERE id = :id"), {"id": plan_id})
     db.commit()
     return redirect(url_for("admin_config"))
+
+
+# ---------- Webhook de WhatsApp (mensajes entrantes) ----------
+
+@app.route("/webhook/whatsapp", methods=["GET"])
+def whatsapp_webhook_verificar():
+    if (request.args.get("hub.mode") == "subscribe"
+            and request.args.get("hub.verify_token") == WHATSAPP_VERIFY_TOKEN):
+        return request.args.get("hub.challenge", ""), 200
+    return "Token de verificación inválido", 403
+
+
+@app.route("/webhook/whatsapp", methods=["POST"])
+def whatsapp_webhook_recibir():
+    if WHATSAPP_APP_SECRET:
+        firma = request.headers.get("X-Hub-Signature-256", "")
+        esperado = "sha256=" + hmac.new(
+            WHATSAPP_APP_SECRET.encode(), request.get_data(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(firma, esperado):
+            return "Firma inválida", 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                valor = change.get("value", {})
+                for mensaje in valor.get("messages", []):
+                    telefono = mensaje.get("from")
+                    if not telefono:
+                        continue
+                    db = get_db()
+                    if mensaje.get("type") == "text":
+                        texto = mensaje.get("text", {}).get("body", "")
+                        procesar_mensaje_entrante(db, telefono, texto)
+                    elif mensaje.get("type") == "image":
+                        procesar_mensaje_entrante(db, telefono, "", es_imagen=True)
+                    else:
+                        procesar_mensaje_entrante(db, telefono, "")
+    except Exception:
+        app.logger.exception("Error procesando webhook de WhatsApp")
+    return jsonify({"status": "ok"}), 200
 
 
 init_db()
