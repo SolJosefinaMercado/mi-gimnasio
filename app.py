@@ -44,6 +44,9 @@ WHATSAPP_ADMIN_TELEFONO = _env_limpio("WHATSAPP_ADMIN_TELEFONO")
 WHATSAPP_ADMIN_TEMPLATE_NAME = _env_limpio("WHATSAPP_ADMIN_TEMPLATE_NAME", "notificacion_bot")
 PRECIO_CLASE_PRUEBA = float(_env_limpio("PRECIO_CLASE_PRUEBA", "10000") or 10000)
 WHATSAPP_TEMPLATE_GENERAL_NAME = _env_limpio("WHATSAPP_TEMPLATE_GENERAL_NAME", "aviso_general")
+WHATSAPP_WABA_ID = _env_limpio("WHATSAPP_WABA_ID")
+WHATSAPP_API_VERSION = _env_limpio("WHATSAPP_API_VERSION", "v25.0")
+GRAPH_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
@@ -202,6 +205,17 @@ def init_db():
             conn.execute(text("ALTER TABLE clientes ADD COLUMN objetivo_semanal INTEGER"))
         if "prueba_usada" not in clientes_cols:
             conn.execute(text("ALTER TABLE clientes ADD COLUMN prueba_usada BOOLEAN NOT NULL DEFAULT FALSE"))
+        # Recalcula el 1RM de los registros ya guardados con la fórmula vigente (Epley),
+        # para que el gráfico no mezcle dos fórmulas. Es idempotente: si ya coincide, no toca nada.
+        for fila in conn.execute(
+            text("SELECT id, kilos, repeticiones, rm_estimado FROM registros_ejercicio")
+        ).mappings().fetchall():
+            nuevo_rm = calcular_1rm(fila["kilos"], fila["repeticiones"])
+            if abs(nuevo_rm - fila["rm_estimado"]) > 0.01:
+                conn.execute(
+                    text("UPDATE registros_ejercicio SET rm_estimado = :rm WHERE id = :id"),
+                    {"rm": nuevo_rm, "id": fila["id"]},
+                )
         existe = conn.execute(text("SELECT 1 FROM configuracion WHERE id = 1")).fetchone()
         if not existe:
             conn.execute(text("INSERT INTO configuracion (id, alias_mp, whatsapp_numero) VALUES (1, '', '')"))
@@ -612,10 +626,11 @@ def calcular_racha(fechas, objetivo):
 
 
 def calcular_1rm(kilos, repeticiones):
-    # Fórmula de Brzycki. Con 1 repetición el 1RM es directamente el peso levantado.
+    # Fórmula de Epley: 1RM = kilos * (1 + repeticiones / 30).
+    # Con 1 repetición el 1RM es directamente el peso levantado.
     if repeticiones <= 1:
         return kilos
-    return kilos / (1.0278 - (0.0278 * repeticiones))
+    return kilos * (1 + repeticiones / 30)
 
 
 def listar_ejercicios_cliente(db, cliente_id):
@@ -714,7 +729,7 @@ def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
         return False, "El cliente no tiene teléfono cargado."
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
             json={
                 "messaging_product": "whatsapp",
@@ -736,9 +751,11 @@ def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
             timeout=10,
         )
         if resp.status_code >= 400:
+            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
             return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
         return True, None
     except requests.RequestException as exc:
+        app.logger.warning("WhatsApp: fallo de red: %s", exc)
         return False, str(exc)
 
 
@@ -752,7 +769,7 @@ def enviar_whatsapp_texto(telefono, texto):
         return False, "Número de teléfono inválido."
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
             json={
                 "messaging_product": "whatsapp",
@@ -763,9 +780,11 @@ def enviar_whatsapp_texto(telefono, texto):
             timeout=10,
         )
         if resp.status_code >= 400:
+            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
             return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
         return True, None
     except requests.RequestException as exc:
+        app.logger.warning("WhatsApp: fallo de red: %s", exc)
         return False, str(exc)
 
 
@@ -776,7 +795,7 @@ def enviar_whatsapp_admin(mensaje):
     numero = formatear_telefono_whatsapp(WHATSAPP_ADMIN_TELEFONO)
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
             json={
                 "messaging_product": "whatsapp",
@@ -794,9 +813,11 @@ def enviar_whatsapp_admin(mensaje):
             timeout=10,
         )
         if resp.status_code >= 400:
+            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
             return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
         return True, None
     except requests.RequestException as exc:
+        app.logger.warning("WhatsApp: fallo de red: %s", exc)
         return False, str(exc)
 
 
@@ -808,7 +829,7 @@ def enviar_whatsapp_general(telefono, mensaje):
         return False, "Sin teléfono cargado."
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
             json={
                 "messaging_product": "whatsapp",
@@ -826,9 +847,11 @@ def enviar_whatsapp_general(telefono, mensaje):
             timeout=10,
         )
         if resp.status_code >= 400:
+            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
             return False, f"{resp.status_code}: {resp.text[:150]}"
         return True, None
     except requests.RequestException as exc:
+        app.logger.warning("WhatsApp: fallo de red: %s", exc)
         return False, str(exc)
 
 
@@ -1440,6 +1463,79 @@ def admin_dashboard():
         hoy_nombre=hoy_nombre,
         turnos_hoy=turnos_hoy,
         ganancias=ganancias,
+    )
+
+
+
+# ---------- Admin: diagnóstico de WhatsApp ----------
+
+def _graph_get(ruta, params=None):
+    try:
+        r = requests.get(
+            f"{GRAPH_URL}/{ruta}",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            params=params, timeout=10,
+        )
+        try:
+            data = r.json()
+        except ValueError:
+            data = {"error": {"message": r.text[:300]}}
+        return r.status_code, data
+    except requests.RequestException as exc:
+        return None, {"error": {"message": str(exc)}}
+
+
+@app.route("/admin/whatsapp", methods=["GET", "POST"])
+@admin_required
+def admin_whatsapp():
+    resultado_prueba = None
+    if request.method == "POST":
+        if not WHATSAPP_ADMIN_TELEFONO:
+            resultado_prueba = (False, "Falta la variable WHATSAPP_ADMIN_TELEFONO en Render.")
+        else:
+            resultado_prueba = enviar_whatsapp_pago(WHATSAPP_ADMIN_TELEFONO, "Prueba", 1000.0, hoy())
+
+    variables = [
+        ("WHATSAPP_TOKEN", bool(WHATSAPP_TOKEN)),
+        ("WHATSAPP_PHONE_ID", bool(WHATSAPP_PHONE_ID)),
+        ("WHATSAPP_WABA_ID", bool(WHATSAPP_WABA_ID)),
+        ("WHATSAPP_ADMIN_TELEFONO", bool(WHATSAPP_ADMIN_TELEFONO)),
+    ]
+
+    telefono = None
+    if WHATSAPP_TOKEN and WHATSAPP_PHONE_ID:
+        codigo, datos = _graph_get(
+            WHATSAPP_PHONE_ID,
+            {"fields": "display_phone_number,verified_name,quality_rating,status,name_status"},
+        )
+        telefono = {"codigo": codigo, "datos": datos, "ok": codigo == 200}
+
+    plantillas, esperadas = None, []
+    if WHATSAPP_TOKEN and WHATSAPP_WABA_ID:
+        codigo, datos = _graph_get(
+            f"{WHATSAPP_WABA_ID}/message_templates",
+            {"fields": "name,language,status,category", "limit": 100},
+        )
+        plantillas = {"codigo": codigo, "datos": datos, "ok": codigo == 200}
+        lista = datos.get("data", []) if codigo == 200 else []
+        for nombre, uso in [
+            (WHATSAPP_TEMPLATE_NAME, "aviso de pago cargado"),
+            (WHATSAPP_ADMIN_TEMPLATE_NAME, "avisos del bot hacia vos"),
+            (WHATSAPP_TEMPLATE_GENERAL_NAME, "mensaje masivo a clientes"),
+        ]:
+            coincidencias = [t for t in lista if t.get("name") == nombre]
+            exacta = [t for t in coincidencias if t.get("language") == WHATSAPP_TEMPLATE_LANG]
+            esperadas.append({
+                "nombre": nombre, "uso": uso,
+                "existe": bool(coincidencias),
+                "estado": exacta[0].get("status") if exacta else None,
+                "idiomas": ", ".join(t.get("language", "?") for t in coincidencias),
+            })
+
+    return render_template(
+        "admin/whatsapp.html", variables=variables, telefono=telefono, plantillas=plantillas,
+        esperadas=esperadas, resultado_prueba=resultado_prueba, idioma=WHATSAPP_TEMPLATE_LANG,
+        version=WHATSAPP_API_VERSION,
     )
 
 
