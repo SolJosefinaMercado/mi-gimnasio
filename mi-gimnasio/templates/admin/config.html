@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Configuración{% endblock %}
+{% block content %}
+<h2 class="mb-4">Configuración de pago y contacto</h2>
+
+<div class="row mb-5">
+  <div class="col-md-6">
+    <h5>Datos de contacto y pago</h5>
+    <p class="text-muted">Esto se muestra en un aviso fijo a tus clientes en la web pública.</p>
+    <form method="POST" action="{{ url_for('admin_config') }}">
+      <div class="mb-3">
+        <label class="form-label">Alias de Mercado Pago</label>
+        <input type="text" name="alias_mp" class="form-control" value="{{ config.alias_mp }}" placeholder="ej: mi.gimnasio.mp">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">WhatsApp del gimnasio</label>
+        <input type="text" name="whatsapp_numero" class="form-control" value="{{ config.whatsapp_numero }}" placeholder="ej: 5491122334455">
+        <div class="form-text">Código de país + área + número, sin espacios, guiones ni el signo "+". Ejemplo Argentina: 549 + código de área sin 0 + número sin 15.</div>
+      </div>
+      <button type="submit" class="btn btn-primary">Guardar</button>
+    </form>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-md-5">
+    <h5>Nuevo plan / abono</h5>
+    <form method="POST" action="{{ url_for('admin_plan_nuevo') }}">
+      <div class="mb-3">
+        <label class="form-label">Nombre</label>
+        <input type="text" name="nombre" class="form-control" placeholder="ej: Mensual, Clase suelta" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Precio</label>
+        <input type="number" step="0.01" name="precio" class="form-control" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Agregar plan</button>
+    </form>
+  </div>
+
+  <div class="col-md-7">
+    <h5>Planes existentes</h5>
+    <table class="table table-striped bg-white">
+      <thead><tr><th>Nombre</th><th>Precio</th><th></th></tr></thead>
+      <tbody>
+        {% for p in planes %}
+        <tr>
+          <td>{{ p.nombre }}</td>
+          <td>${{ '%.2f'|format(p.precio) }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('admin_plan_eliminar', plan_id=p.id) }}" onsubmit="return confirm('¿Eliminar plan?');">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="text-muted">Todavía no cargaste ningún plan.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

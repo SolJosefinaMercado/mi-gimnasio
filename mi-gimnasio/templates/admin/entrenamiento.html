@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Entrenamiento del día{% endblock %}
+{% block content %}
+<h2 class="mb-4">Entrenamiento del día</h2>
+
+<form method="GET" class="row g-2 mb-4">
+  <div class="col-auto">
+    <input type="date" name="fecha" value="{{ fecha_sel }}" class="form-control">
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-primary">Ver fecha</button>
+  </div>
+</form>
+
+<p class="text-muted">{{ 'Hoy' if es_hoy else fecha_sel }} — esto es lo que ven tus clientes en la home cuando la fecha es hoy.</p>
+
+<form method="POST" action="{{ url_for('admin_entrenamiento', fecha=fecha_sel) }}">
+  <div class="mb-3">
+    <textarea name="contenido" class="form-control" rows="10" placeholder="Ej: Entrada en calor 10' + 4x(10 sentadillas, 10 flexiones, 10 abdominales) + estiramiento">{{ entrenamiento.contenido if entrenamiento else '' }}</textarea>
+  </div>
+  <button type="submit" class="btn btn-primary">Guardar</button>
+</form>
+{% endblock %}

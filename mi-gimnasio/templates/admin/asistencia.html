@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Asistencia{% endblock %}
+{% block content %}
+<h2 class="mb-4">Asistencia</h2>
+
+<form method="GET" class="row g-2 mb-4">
+  <div class="col-auto">
+    <input type="date" name="fecha" value="{{ fecha_sel }}" class="form-control">
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-primary">Ver fecha</button>
+  </div>
+</form>
+
+<p class="text-muted">Turnos del {{ dia_nombre }} ({{ fecha_sel }})</p>
+
+{% for h in horarios %}
+<div class="card">
+  <div class="card-body">
+    <h6>{{ h.hora_inicio }}-{{ h.hora_fin }} {% if h.etiqueta %}· {{ h.etiqueta }}{% endif %}</h6>
+    {% set activas = h.inscripciones | selectattr('activa') | list %}
+    {% if activas %}
+    <ul class="list-group">
+      {% for insc in activas %}
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        {{ insc.cliente.nombre }}
+        {% if insc.id in asistencias_hoy %}
+          <span class="badge bg-success">Presente</span>
+        {% else %}
+          <form method="POST">
+            <input type="hidden" name="inscripcion_id" value="{{ insc.id }}">
+            <button type="submit" class="btn btn-sm btn-outline-success">Marcar presente</button>
+          </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted mb-0">Sin inscriptos.</p>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<p class="text-muted">No hay turnos configurados para este día.</p>
+{% endfor %}
+{% endblock %}

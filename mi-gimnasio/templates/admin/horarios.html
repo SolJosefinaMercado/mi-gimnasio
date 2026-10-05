@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Horarios{% endblock %}
+{% block content %}
+<h2 class="mb-4">Horarios</h2>
+
+<div class="row">
+  <div class="col-md-5">
+    <h5>Nuevo horario</h5>
+    <form method="POST">
+      <div class="mb-3">
+        <label class="form-label">Día</label>
+        <select name="dia_semana" class="form-select" required>
+          {% for d in dias %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="mb-3 row">
+        <div class="col">
+          <label class="form-label">Hora inicio</label>
+          <input type="time" name="hora_inicio" class="form-control" required>
+        </div>
+        <div class="col">
+          <label class="form-label">Hora fin</label>
+          <input type="time" name="hora_fin" class="form-control" required>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Etiqueta (ej. "Funcional")</label>
+        <input type="text" name="etiqueta" class="form-control">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Cupo máximo</label>
+        <input type="number" name="cupo_maximo" class="form-control" value="10" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Crear horario</button>
+    </form>
+  </div>
+
+  <div class="col-md-7">
+    <h5>Horarios existentes</h5>
+    <table class="table table-striped bg-white">
+      <thead><tr><th>Día</th><th>Hora</th><th>Etiqueta</th><th>Cupo</th><th>Estado</th><th></th></tr></thead>
+      <tbody>
+        {% for h in horarios %}
+        <tr class="{{ 'table-secondary' if not h.activo }}">
+          <td>{{ h.dia_semana }}</td>
+          <td>{{ h.hora_inicio }}-{{ h.hora_fin }}</td>
+          <td>{{ h.etiqueta or '-' }}</td>
+          <td>{{ h.cupo_disponible }}/{{ h.cupo_maximo }}</td>
+          <td>{{ 'Activo' if h.activo else 'Cancelado' }}</td>
+          <td class="d-flex gap-1">
+            <form method="POST" action="{{ url_for('admin_horario_cancelar', horario_id=h.id) }}">
+              <button type="submit" class="btn btn-sm btn-outline-warning">{{ 'Cancelar' if h.activo else 'Reactivar' }}</button>
+            </form>
+            <form method="POST" action="{{ url_for('admin_horario_eliminar', horario_id=h.id) }}" onsubmit="return confirm('¿Eliminar horario? También se borran sus reservas.');">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="text-muted small">"Cancelar" pausa la clase (no acepta reservas ni ocupa lugar en Asistencia) sin borrar el historial. "Eliminar" la borra para siempre, junto con sus reservas.</p>
+  </div>
+</div>
+{% endblock %}
