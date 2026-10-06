@@ -85,6 +85,30 @@
   {% endif %}
 </div></div>
 
+<h5 class="section-title">5. Últimos envíos: ¿se entregaron?</h5>
+<p class="text-ink-soft small mb-2">Meta avisa a la app (por el webhook) si cada mensaje se entregó o falló, y por qué. Solo aparecen los envíos hechos después de actualizar la app.</p>
+{% if not estados %}
+  <p class="text-ink-soft">Todavía no llegó ningún estado. Mandá una prueba y refrescá esta página en unos segundos. Si pasa un rato y sigue vacío, revisá que el webhook esté suscripto al campo <code>messages</code>.</p>
+{% else %}
+  <ul class="list-group mb-4">
+    {% for e in estados %}
+    <li class="list-group-item">
+      <div class="d-flex justify-content-between align-items-center">
+        <span class="small">{{ e.fecha }} · <code>{{ e.wa_id or '—' }}</code></span>
+        {% if e.estado == 'failed' %}<span class="badge-estado badge-bloqueado"><i class="bi bi-x"></i> No entregado</span>
+        {% elif e.estado == 'read' %}<span class="badge-estado badge-disponible"><i class="bi bi-check2-all"></i> Leído</span>
+        {% elif e.estado == 'delivered' %}<span class="badge-estado badge-disponible"><i class="bi bi-check2-all"></i> Entregado</span>
+        {% else %}<span class="badge-estado badge-cierra-pronto"><i class="bi bi-send"></i> Enviado a Meta</span>{% endif %}
+      </div>
+      {% if e.estado == 'failed' %}
+        <div class="small mt-1" style="color:var(--danger);">Código {{ e.codigo or '?' }}{% if e.detalle %}: {{ e.detalle }}{% endif %}</div>
+        {% if e.explicacion %}<div class="text-ink-soft small">→ {{ e.explicacion }}</div>{% endif %}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+
 <h5 class="section-title">¿Qué significa cada error de Meta?</h5>
 <ul class="text-ink-soft small">
   <li><strong>131042 / "payment"</strong>: la cuenta no tiene un método de pago cargado. Meta lo exige para mandar mensajes iniciados por el negocio (se carga en business.facebook.com → Facturación / Billing Hub → la cuenta Valkiria-Notificaciones).</li>

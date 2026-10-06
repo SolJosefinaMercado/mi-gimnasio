@@ -159,6 +159,17 @@ registros_ejercicio_t = Table(
     Column("rm_estimado", Float, nullable=False),
 )
 
+whatsapp_estados_t = Table(
+    "whatsapp_estados", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("fecha", DateTime, nullable=False),
+    Column("wa_id", String),
+    Column("estado", String, nullable=False),   # sent | delivered | read | failed
+    Column("mensaje_id", String),
+    Column("codigo", Integer),
+    Column("detalle", Text),
+)
+
 conversaciones_whatsapp_t = Table(
     "conversaciones_whatsapp", metadata,
     Column("telefono", String, primary_key=True),
@@ -1455,6 +1466,64 @@ def admin_dashboard():
 
 
 
+
+# ---------- Estados de entrega de WhatsApp (los avisa Meta por el webhook) ----------
+
+EXPLICACION_ERRORES_WHATSAPP = {
+    131042: "Falta un método de pago en la cuenta de WhatsApp (Billing Hub, en Meta).",
+    131026: "Meta no pudo entregarlo: el número no tiene WhatsApp, o no puede recibir mensajes de empresas.",
+    131047: "Pasaron más de 24 hs desde que esa persona te escribió: solo se puede mandar una plantilla.",
+    131049: "Meta decidió no entregarlo para cuidar la calidad de la plataforma (suele pasar con pocos envíos nuevos).",
+    131050: "Esa persona pidió no recibir mensajes de la empresa.",
+    131053: "Meta no pudo procesar el contenido del mensaje.",
+    132015: "La plantilla está pausada por baja calidad.",
+    132016: "La plantilla está deshabilitada por baja calidad.",
+    130429: "Se superó el límite de envíos por segundo.",
+    131056: "Demasiados mensajes seguidos al mismo número; reintentá más tarde.",
+}
+
+
+def registrar_estado_whatsapp(db, st):
+    errores = st.get("errors") or []
+    codigo, detalle = None, None
+    if errores:
+        e = errores[0]
+        codigo = e.get("code")
+        partes = [e.get("title"), (e.get("error_data") or {}).get("details") or e.get("message")]
+        detalle = " — ".join(x for x in partes if x)
+    db.execute(
+        text(
+            "INSERT INTO whatsapp_estados (fecha, wa_id, estado, mensaje_id, codigo, detalle) "
+            "VALUES (:f, :w, :e, :m, :c, :d)"
+        ),
+        {"f": datetime.now(TZ_LOCAL).replace(tzinfo=None), "w": st.get("recipient_id"),
+         "e": st.get("status") or "?", "m": st.get("id"), "c": codigo, "d": detalle},
+    )
+    db.execute(text(
+        "DELETE FROM whatsapp_estados WHERE id NOT IN "
+        "(SELECT id FROM whatsapp_estados ORDER BY id DESC LIMIT 200)"
+    ))
+    db.commit()
+    if st.get("status") == "failed":
+        app.logger.warning("WhatsApp NO entregado a %s: código %s — %s", st.get("recipient_id"), codigo, detalle)
+
+
+def listar_estados_whatsapp(db, limite=15):
+    rows = db.execute(
+        text("SELECT * FROM whatsapp_estados ORDER BY id DESC LIMIT :n"), {"n": limite}
+    ).mappings().fetchall()
+    resultado = []
+    for r in rows:
+        fecha = r["fecha"]
+        fecha_txt = fecha.strftime("%d/%m %H:%M") if hasattr(fecha, "strftime") else str(fecha)[5:16].replace("-", "/")
+        resultado.append({
+            "fecha": fecha_txt, "wa_id": r["wa_id"], "estado": r["estado"], "codigo": r["codigo"],
+            "detalle": r["detalle"],
+            "explicacion": EXPLICACION_ERRORES_WHATSAPP.get(r["codigo"]) if r["codigo"] else None,
+        })
+    return resultado
+
+
 # ---------- Admin: diagnóstico de WhatsApp ----------
 
 def _graph_get(ruta, params=None):
@@ -1529,6 +1598,7 @@ def admin_whatsapp():
     return render_template(
         "admin/whatsapp.html", variables=variables, telefono=telefono, plantillas=plantillas,
         esperadas=esperadas, resultado_prueba=resultado_prueba, idioma=WHATSAPP_TEMPLATE_LANG,
+        estados=listar_estados_whatsapp(get_db()),
         version=WHATSAPP_API_VERSION,
     )
 
@@ -1834,6 +1904,8 @@ def whatsapp_webhook_recibir():
         for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
                 valor = change.get("value", {})
+                for st in valor.get("statuses", []):
+                    registrar_estado_whatsapp(get_db(), st)
                 for mensaje in valor.get("messages", []):
                     telefono = mensaje.get("from")
                     if not telefono:
