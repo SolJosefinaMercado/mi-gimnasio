@@ -721,42 +721,80 @@ def formatear_telefono_whatsapp(telefono):
     return "54" + digitos
 
 
+_FORMATO_PLANTILLAS = {}  # plantilla -> "named" | "positional": el formato que funcionó la última vez
+
+
+def _limpiar_param(texto):
+    # Meta no acepta saltos de línea, tabulaciones ni varios espacios seguidos dentro de una variable.
+    return " ".join(str(texto).split())
+
+
+def _armar_parametros(valores, formato):
+    if formato == "named":
+        return [{"type": "text", "parameter_name": n, "text": _limpiar_param(t)} for n, t in valores]
+    return [{"type": "text", "text": _limpiar_param(t)} for n, t in valores]
+
+
+def _es_error_de_formato(resp):
+    # Meta responde 132012 (formato de parámetros distinto al de la plantilla) o 132000 (cantidad distinta).
+    try:
+        error = resp.json().get("error", {})
+    except ValueError:
+        return False
+    mensaje = (error.get("message") or "").lower() + " " + str(error.get("error_data", "")).lower()
+    return error.get("code") in (132000, 132012) or "format" in mensaje or "number of parameters" in mensaje
+
+
+def _enviar_plantilla(numero, plantilla, valores):
+    """Envía una plantilla de WhatsApp. `valores` es una lista ordenada de (nombre_variable, texto).
+
+    Según cómo se haya creado la plantilla en Meta, las variables son con nombre ({{nombre}}) o
+    numeradas ({{1}}). Probamos el formato que funcionó la última vez y, si Meta avisa que el
+    formato no coincide, reintentamos con el otro y recordamos cuál sirvió."""
+    primero = _FORMATO_PLANTILLAS.get(plantilla, "named")
+    ultimo_error = None
+    for formato in (primero, "positional" if primero == "named" else "named"):
+        try:
+            resp = requests.post(
+                f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+                json={
+                    "messaging_product": "whatsapp",
+                    "to": numero,
+                    "type": "template",
+                    "template": {
+                        "name": plantilla,
+                        "language": {"code": WHATSAPP_TEMPLATE_LANG},
+                        "components": [{"type": "body", "parameters": _armar_parametros(valores, formato)}],
+                    },
+                },
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            app.logger.warning("WhatsApp: fallo de red: %s", exc)
+            return False, str(exc)
+        if resp.status_code < 400:
+            _FORMATO_PLANTILLAS[plantilla] = formato
+            return True, None
+        app.logger.warning("WhatsApp API error %s (plantilla %s, formato %s): %s",
+                           resp.status_code, plantilla, formato, resp.text[:400])
+        ultimo_error = f"WhatsApp API respondió {resp.status_code}: {resp.text[:300]}"
+        if not _es_error_de_formato(resp):
+            return False, ultimo_error
+    return False, ultimo_error
+
+
 def enviar_whatsapp_pago(telefono, nombre, monto, fecha_vencimiento):
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
         return False, "WhatsApp no está configurado (faltan WHATSAPP_TOKEN / WHATSAPP_PHONE_ID)."
     numero = formatear_telefono_whatsapp(telefono)
     if not numero:
         return False, "El cliente no tiene teléfono cargado."
-    try:
-        resp = requests.post(
-            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
-            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-            json={
-                "messaging_product": "whatsapp",
-                "to": numero,
-                "type": "template",
-                "template": {
-                    "name": WHATSAPP_TEMPLATE_NAME,
-                    "language": {"code": WHATSAPP_TEMPLATE_LANG},
-                    "components": [{
-                        "type": "body",
-                        "parameters": [
-                            {"type": "text", "parameter_name": "nombre", "text": nombre},
-                            {"type": "text", "parameter_name": "monto", "text": f"{monto:,.2f}"},
-                            {"type": "text", "parameter_name": "vencimiento", "text": fecha_vencimiento.strftime("%d/%m/%Y")},
-                        ],
-                    }],
-                },
-            },
-            timeout=10,
-        )
-        if resp.status_code >= 400:
-            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
-            return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
-        return True, None
-    except requests.RequestException as exc:
-        app.logger.warning("WhatsApp: fallo de red: %s", exc)
-        return False, str(exc)
+    return _enviar_plantilla(numero, WHATSAPP_TEMPLATE_NAME, [
+        ("nombre", nombre),
+        ("monto", f"{monto:,.2f}"),
+        ("vencimiento", fecha_vencimiento.strftime("%d/%m/%Y")),
+    ])
 
 
 def enviar_whatsapp_texto(telefono, texto):
@@ -793,32 +831,7 @@ def enviar_whatsapp_admin(mensaje):
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID and WHATSAPP_ADMIN_TELEFONO):
         return False, "Falta configurar WHATSAPP_ADMIN_TELEFONO."
     numero = formatear_telefono_whatsapp(WHATSAPP_ADMIN_TELEFONO)
-    try:
-        resp = requests.post(
-            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
-            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-            json={
-                "messaging_product": "whatsapp",
-                "to": numero,
-                "type": "template",
-                "template": {
-                    "name": WHATSAPP_ADMIN_TEMPLATE_NAME,
-                    "language": {"code": WHATSAPP_TEMPLATE_LANG},
-                    "components": [{
-                        "type": "body",
-                        "parameters": [{"type": "text", "parameter_name": "mensaje", "text": mensaje}],
-                    }],
-                },
-            },
-            timeout=10,
-        )
-        if resp.status_code >= 400:
-            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
-            return False, f"WhatsApp API respondió {resp.status_code}: {resp.text[:200]}"
-        return True, None
-    except requests.RequestException as exc:
-        app.logger.warning("WhatsApp: fallo de red: %s", exc)
-        return False, str(exc)
+    return _enviar_plantilla(numero, WHATSAPP_ADMIN_TEMPLATE_NAME, [("mensaje", mensaje)])
 
 
 def enviar_whatsapp_general(telefono, mensaje):
@@ -827,32 +840,7 @@ def enviar_whatsapp_general(telefono, mensaje):
     numero = formatear_telefono_whatsapp(telefono)
     if not numero:
         return False, "Sin teléfono cargado."
-    try:
-        resp = requests.post(
-            f"{GRAPH_URL}/{WHATSAPP_PHONE_ID}/messages",
-            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-            json={
-                "messaging_product": "whatsapp",
-                "to": numero,
-                "type": "template",
-                "template": {
-                    "name": WHATSAPP_TEMPLATE_GENERAL_NAME,
-                    "language": {"code": WHATSAPP_TEMPLATE_LANG},
-                    "components": [{
-                        "type": "body",
-                        "parameters": [{"type": "text", "parameter_name": "mensaje", "text": mensaje}],
-                    }],
-                },
-            },
-            timeout=10,
-        )
-        if resp.status_code >= 400:
-            app.logger.warning("WhatsApp API error %s: %s", resp.status_code, resp.text[:400])
-            return False, f"{resp.status_code}: {resp.text[:150]}"
-        return True, None
-    except requests.RequestException as exc:
-        app.logger.warning("WhatsApp: fallo de red: %s", exc)
-        return False, str(exc)
+    return _enviar_plantilla(numero, WHATSAPP_TEMPLATE_GENERAL_NAME, [("mensaje", mensaje)])
 
 
 # ---------- Bot conversacional de WhatsApp (clase de prueba) ----------
@@ -1514,8 +1502,13 @@ def admin_whatsapp():
     if WHATSAPP_TOKEN and WHATSAPP_WABA_ID:
         codigo, datos = _graph_get(
             f"{WHATSAPP_WABA_ID}/message_templates",
-            {"fields": "name,language,status,category", "limit": 100},
+            {"fields": "name,language,status,category,parameter_format", "limit": 100},
         )
+        if codigo != 200:  # por si esta versión de la API no conoce parameter_format
+            codigo, datos = _graph_get(
+                f"{WHATSAPP_WABA_ID}/message_templates",
+                {"fields": "name,language,status,category", "limit": 100},
+            )
         plantillas = {"codigo": codigo, "datos": datos, "ok": codigo == 200}
         lista = datos.get("data", []) if codigo == 200 else []
         for nombre, uso in [
@@ -1530,6 +1523,7 @@ def admin_whatsapp():
                 "existe": bool(coincidencias),
                 "estado": exacta[0].get("status") if exacta else None,
                 "idiomas": ", ".join(t.get("language", "?") for t in coincidencias),
+                "formato": exacta[0].get("parameter_format") if exacta else None,
             })
 
     return render_template(

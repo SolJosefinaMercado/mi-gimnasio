@@ -59,6 +59,7 @@
         {% elif e.existe %}<span class="badge-estado badge-bloqueado"><i class="bi bi-translate"></i> Existe, pero no en {{ idioma }}</span>
         {% else %}<span class="badge-estado badge-sin-cupo"><i class="bi bi-dash"></i> No creada</span>{% endif %}
       </div>
+      {% if e.formato %}<div class="text-ink-soft small mt-1">Variables: {{ 'con nombre ({{nombre}})' if e.formato == 'NAMED' else 'numeradas ({{1}})' }} — la app se adapta sola a cualquiera de las dos.</div>{% endif %}
       {% if e.existe and not e.estado %}<div class="text-ink-soft small mt-1">Idiomas en los que existe: {{ e.idiomas }}</div>{% endif %}
     </li>
     {% endfor %}
