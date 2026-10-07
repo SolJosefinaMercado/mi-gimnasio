@@ -9,6 +9,14 @@
 </div>
 {% endfor %}
 
+{% if frase_hoy %}
+<div class="frase-card">
+  <div class="frase-etiqueta"><i class="bi bi-lightning-charge-fill"></i> Frase del día</div>
+  <p class="frase-texto">“{{ frase_hoy.texto }}”</p>
+  <div class="frase-autor">— {{ frase_hoy.autor }}</div>
+</div>
+{% endif %}
+
 {% if entrenamiento_hoy %}
 <div class="card mb-4 border-success">
   <div class="card-body">

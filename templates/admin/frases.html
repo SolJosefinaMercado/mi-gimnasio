@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Frases del día{% endblock %}
+{% block content %}
+<h2 class="mb-2">Frases del día</h2>
+<p class="text-ink-soft mb-4">
+  Cada día los clientes ven una frase distinta en la pantalla de reservas. Cambia sola a la medianoche y
+  recorre todas las frases activas antes de repetir. Hay <strong>{{ activas }}</strong> activas.
+  {% if activas and activas < 14 %}Con menos de 14 el ciclo se repite en menos de dos semanas.{% endif %}
+</p>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="mb-3">Nueva frase</h5>
+    <form method="POST">
+      <div class="mb-3">
+        <label class="form-label">Frase</label>
+        <textarea name="texto" class="form-control" rows="3" maxlength="400" required></textarea>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Quién la dijo</label>
+        <input type="text" name="autor" class="form-control" maxlength="80" placeholder="Ej: Michael Jordan" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Agregar frase</button>
+    </form>
+    <p class="text-ink-soft small mt-3 mb-0">
+      Antes de cargar una, conviene confirmar que realmente sea de esa persona: circulan muchas frases mal atribuidas.
+    </p>
+  </div>
+</div>
+
+<h5 class="mb-3">Frases cargadas</h5>
+{% for f in frases %}
+<div class="card mb-2 {{ 'frase-inactiva' if not f.activa }}">
+  <div class="card-body">
+    {% if f.id == hoy_frase_id %}<span class="badge-estado badge-disponible mb-2"><i class="bi bi-star-fill"></i> Frase de hoy</span>{% endif %}
+    {% if not f.activa %}<span class="badge-estado badge-sin-cupo mb-2">Desactivada</span>{% endif %}
+
+    <details>
+      <summary class="frase-resumen">
+        <span>“{{ f.texto }}”</span>
+        <span class="frase-autor-mini">— {{ f.autor }}</span>
+      </summary>
+      <form method="POST" action="{{ url_for('admin_frase_editar', frase_id=f.id) }}" class="mt-3">
+        <textarea name="texto" class="form-control mb-2" rows="3" maxlength="400" required>{{ f.texto }}</textarea>
+        <input type="text" name="autor" class="form-control mb-2" maxlength="80" value="{{ f.autor }}" required>
+        <button type="submit" class="btn btn-sm btn-primary">Guardar cambios</button>
+      </form>
+    </details>
+
+    <div class="d-flex gap-2 mt-3">
+      <form method="POST" action="{{ url_for('admin_frase_activar', frase_id=f.id) }}">
+        <button type="submit" class="btn btn-sm btn-outline-warning">{{ 'Desactivar' if f.activa else 'Activar' }}</button>
+      </form>
+      <form method="POST" action="{{ url_for('admin_frase_eliminar', frase_id=f.id) }}" onsubmit="return confirm('¿Eliminar esta frase para siempre?');">
+        <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% else %}
+<p class="text-ink-soft">No hay frases cargadas. Agregá la primera arriba.</p>
+{% endfor %}
+{% endblock %}

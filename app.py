@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import hmac
 import hashlib
 from datetime import date, datetime, timedelta
@@ -181,6 +182,26 @@ conversaciones_whatsapp_t = Table(
     Column("actualizado_en", DateTime),
 )
 
+frases_t = Table(
+    "frases", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("texto", Text, nullable=False),
+    Column("autor", String, nullable=False),
+    Column("activa", Boolean, nullable=False, server_default="true"),
+)
+
+# Tanda inicial de la "frase del día". Se carga una sola vez, cuando se crea la tabla;
+# después se administra desde /admin/frases. Son traducciones libres al castellano.
+FRASES_INICIALES = [
+    ("He fallado una y otra vez en mi vida. Y por eso he tenido éxito.", "Michael Jordan"),
+    ("Puedo aceptar el fracaso, todos fallamos en algo. Pero no puedo aceptar no intentarlo.", "Michael Jordan"),
+    ("Las últimas tres o cuatro repeticiones son las que hacen crecer el músculo. Esa zona de dolor separa a un campeón de quien no lo es.", "Arnold Schwarzenegger"),
+    ("Solo los disciplinados son libres en la vida. Si no tienes disciplina, eres esclavo de tus estados de ánimo y de tus pasiones.", "Eliud Kipchoge"),
+    ("La presión es un privilegio.", "Billie Jean King"),
+    ("Si quieres ser el mejor, tienes que hacer cosas que otros no están dispuestos a hacer.", "Michael Phelps"),
+    ("Todos tenemos sueños. Pero para convertirlos en realidad hacen falta determinación, dedicación, autodisciplina y esfuerzo.", "Jesse Owens"),
+]
+
 MINUTOS_LIMITE_RESERVA = 15
 
 
@@ -198,7 +219,17 @@ def close_db(exception=None):
 
 
 def init_db():
+    # Se mira antes de create_all: la tanda inicial de frases se carga solo la primera vez,
+    # así no reaparecen las que el admin borró.
+    frases_ya_existia = "frases" in inspect(engine).get_table_names()
     metadata.create_all(engine)
+    if not frases_ya_existia:
+        with engine.begin() as conn:
+            for texto, autor in FRASES_INICIALES:
+                conn.execute(
+                    text("INSERT INTO frases (texto, autor, activa) VALUES (:texto, :autor, :activa)"),
+                    {"texto": texto, "autor": autor, "activa": True},
+                )
     inspector = inspect(engine)
     horarios_cols = {c["name"] for c in inspector.get_columns("horarios")}
     inscripciones_cols = {c["name"] for c in inspector.get_columns("inscripciones")}
@@ -548,6 +579,38 @@ def guardar_entrenamiento(db, fecha, contenido):
             {"fecha": fecha, "contenido": contenido},
         )
     db.commit()
+
+
+# ---------- Frase del día ----------
+
+class Frase:
+    def __init__(self, row):
+        self.id = row["id"]
+        self.texto = row["texto"]
+        self.autor = row["autor"]
+        self.activa = bool(row["activa"])
+
+
+def listar_frases(db, solo_activas=False):
+    sql = "SELECT * FROM frases"
+    if solo_activas:
+        sql += " WHERE activa = :activa"
+    sql += " ORDER BY id"
+    params = {"activa": True} if solo_activas else {}
+    return [Frase(r) for r in db.execute(text(sql), params).mappings().fetchall()]
+
+
+def frase_del_dia(db, fecha):
+    # Una frase por día, igual para todos y sin tareas programadas: el orden sale de la fecha.
+    # Cada vuelta completa recorre todas las frases activas una vez, en un orden mezclado
+    # (distinto en cada vuelta), así no se siente una lista fija ni se repite antes de tiempo.
+    frases = listar_frases(db, solo_activas=True)
+    if not frases:
+        return None
+    vuelta, posicion = divmod(fecha.toordinal(), len(frases))
+    orden = list(range(len(frases)))
+    random.Random(vuelta).shuffle(orden)
+    return frases[orden[posicion]]
 
 
 # ---------- Notificaciones ----------
@@ -1133,6 +1196,7 @@ def index():
         "index.html", horarios_por_dia=horarios_por_dia, cliente_actual=cliente_actual,
         planes=listar_planes(db), config=config, whatsapp_link=whatsapp_link,
         entrenamiento_hoy=obtener_entrenamiento(db, hoy()), notificaciones=notificaciones,
+        frase_hoy=frase_del_dia(db, hoy()),
     )
 
 
@@ -1785,6 +1849,70 @@ def admin_horario_eliminar(horario_id):
     db.execute(text("DELETE FROM horarios WHERE id = :id"), {"id": horario_id})
     db.commit()
     return redirect(url_for("admin_horarios"))
+
+
+# ---------- Admin: frases del día ----------
+
+@app.route("/admin/frases", methods=["GET", "POST"])
+@admin_required
+def admin_frases():
+    db = get_db()
+    if request.method == "POST":
+        texto = request.form.get("texto", "").strip()
+        autor = request.form.get("autor", "").strip()
+        if texto and autor:
+            db.execute(
+                text("INSERT INTO frases (texto, autor, activa) VALUES (:texto, :autor, :activa)"),
+                {"texto": texto, "autor": autor, "activa": True},
+            )
+            db.commit()
+        else:
+            flash("Completá la frase y quién la dijo.")
+        return redirect(url_for("admin_frases"))
+    frases = listar_frases(db)
+    hoy_frase = frase_del_dia(db, hoy())
+    return render_template(
+        "admin/frases.html", frases=frases,
+        activas=sum(1 for f in frases if f.activa),
+        hoy_frase_id=hoy_frase.id if hoy_frase else None,
+    )
+
+
+@app.route("/admin/frases/<int:frase_id>/editar", methods=["POST"])
+@admin_required
+def admin_frase_editar(frase_id):
+    db = get_db()
+    texto = request.form.get("texto", "").strip()
+    autor = request.form.get("autor", "").strip()
+    if texto and autor:
+        db.execute(
+            text("UPDATE frases SET texto = :texto, autor = :autor WHERE id = :id"),
+            {"texto": texto, "autor": autor, "id": frase_id},
+        )
+        db.commit()
+    else:
+        flash("La frase y el autor no pueden quedar vacíos.")
+    return redirect(url_for("admin_frases"))
+
+
+@app.route("/admin/frases/<int:frase_id>/activar", methods=["POST"])
+@admin_required
+def admin_frase_activar(frase_id):
+    db = get_db()
+    row = db.execute(text("SELECT activa FROM frases WHERE id = :id"), {"id": frase_id}).mappings().fetchone()
+    if row:
+        db.execute(text("UPDATE frases SET activa = :activa WHERE id = :id"), {"activa": not row["activa"], "id": frase_id})
+        db.commit()
+    return redirect(url_for("admin_frases"))
+
+
+@app.route("/admin/frases/<int:frase_id>/eliminar", methods=["POST"])
+@admin_required
+def admin_frase_eliminar(frase_id):
+    db = get_db()
+    db.execute(text("DELETE FROM frases WHERE id = :id"), {"id": frase_id})
+    db.commit()
+    return redirect(url_for("admin_frases"))
 
 
 # ---------- Admin: asistencia ----------

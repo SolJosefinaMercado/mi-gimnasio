@@ -128,6 +128,36 @@ a { color: var(--violet-text); }
   margin-top: 0.1rem;
 }
 
+/* ---------- Frase del día (reservas) ---------- */
+.frase-card {
+  border: 1px solid var(--violet);
+  border-left: 4px solid var(--lime);
+  background: linear-gradient(135deg, var(--violet-soft) 0%, var(--surface) 100%);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.25rem;
+}
+.frase-etiqueta {
+  color: var(--lime);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.45rem;
+}
+.frase-texto {
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0 0 0.5rem;
+}
+.frase-autor { color: var(--violet-text); font-size: 0.85rem; font-weight: 600; }
+.frase-inactiva { opacity: 0.55; }
+.frase-resumen { cursor: pointer; list-style: none; }
+.frase-resumen::-webkit-details-marker { display: none; }
+.frase-autor-mini { display: block; color: var(--violet-text); font-size: 0.8rem; margin-top: 0.15rem; }
+
 /* ---------- Precios y abonos (mi cuenta) ---------- */
 .precios-card .precio-linea { color: var(--text); }
 .precios-card .precio-monto { color: var(--lime); font-weight: 700; }
